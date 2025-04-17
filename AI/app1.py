@@ -177,25 +177,28 @@ def main_page():
     st.title("🩺 Aplikasi Pemeriksaan Kesehatan")
     st.header("Apakah kamu merasa sakit hari ini?")
     
-    # Inisialisasi state
+    # Inisialisasi session state
     if 'show_healthy_message' not in st.session_state:
         st.session_state.show_healthy_message = False
+
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Ya", help="Klik jika merasa tidak sehat", type="primary"):
             st.session_state.page = 'medical_history'
-            st.session_state.show_healthy_message = False 
+            st.session_state.show_healthy_message = False
             st.rerun()
     with col2:
         if st.button("Tidak", help="Klik jika merasa sehat"):
             st.session_state.show_healthy_message = True
+            st.rerun()
     if st.session_state.show_healthy_message:
         st.success("""
             🎉 **Bagus! Tetap jaga kesehatan dan perhatikan kondisi tubuh Anda.**\n\n
             🥗 *Tetap patuhi pola hidup sehat!*\n\n
             ⚠️ Jika ada gejala yang muncul, silakan kembali ke aplikasi ini.
         """)
-        if st.button("☑️ Mengerti", key="close_healthy_message"):
+        # Tombol untuk menutup pesan
+        if st.button("Tutup Pesan", key="close_message"):
             st.session_state.show_healthy_message = False
             st.rerun()
     st.divider()
