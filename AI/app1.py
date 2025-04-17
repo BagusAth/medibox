@@ -177,19 +177,27 @@ def main_page():
     st.title("🩺 Aplikasi Pemeriksaan Kesehatan")
     st.header("Apakah kamu merasa sakit hari ini?")
     
+    # Inisialisasi state
+    if 'show_healthy_message' not in st.session_state:
+        st.session_state.show_healthy_message = False
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Ya", help="Klik jika merasa tidak sehat", type="primary"):
             st.session_state.page = 'medical_history'
+            st.session_state.show_healthy_message = False 
             st.rerun()
     with col2:
         if st.button("Tidak", help="Klik jika merasa sehat"):
-            st.success("""
-                       🎉 Bagus! Tetap jaga kesehatan dan perhatikan kondisi tubuh Anda.\n\n 
-                       🥗 Tetap patuhi pola hidup sehat!
-                       """)
-            st.success("Jika ada gejala yang muncul, silakan kembali ke aplikasi ini.")
-
+            st.session_state.show_healthy_message = True
+    if st.session_state.show_healthy_message:
+        st.success("""
+            🎉 **Bagus! Tetap jaga kesehatan dan perhatikan kondisi tubuh Anda.**\n\n
+            🥗 *Tetap patuhi pola hidup sehat!*\n\n
+            ⚠️ Jika ada gejala yang muncul, silakan kembali ke aplikasi ini.
+        """)
+        if st.button("☑️ Mengerti", key="close_healthy_message"):
+            st.session_state.show_healthy_message = False
+            st.rerun()
     st.divider()
     st.subheader("📚 Riwayat Perubahan Sensor")
     # Tombol Refresh Manual untuk data sensor historis
