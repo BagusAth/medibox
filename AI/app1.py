@@ -60,7 +60,7 @@ def get_sensor_data():
 
 from datetime import timedelta
 
-def get_sensor_history(limit=100):
+def get_sensor_history(limit=2000):
     try:
         # Ambil riwayat data sensor terbaru dari MongoDB
         records = list(collection.find().sort("timestamp", -1).limit(limit))
@@ -71,8 +71,13 @@ def get_sensor_history(limit=100):
         last = {}
         obat_count = 0  # Inisialisasi counter untuk jumlah obat
         previous_ldr = None  # Nilai ldr sebelumnya
+        last_timestamp = None  # Track the last time we added a record
+        
+        # Reset counter jika diminta
+        if st.session_state.reset_obat_count:
+            obat_count = 0
+            st.session_state.reset_obat_count = False
 
-        # Iterasi setiap record dan filter perubahan sensor
         for record in records:
             changes = {}
             for key in ['temperature', 'humidity', 'ldr_value']:
@@ -82,13 +87,36 @@ def get_sensor_history(limit=100):
 
             # Logika untuk menghitung penambahan obat
             current_ldr = record.get('ldr_value')
-            if previous_ldr is not None:
+            
+            # Tambahkan status kotak (terbuka/tertutup)
+            if current_ldr >= 1000:
+                changes['status_kotak'] = "TERBUKA 📂"
+            else:
+                changes['status_kotak'] = "TERTUTUP 📁"
+            
+            # Get current timestamp
+            timestamp = record.get('timestamp')
+            current_timestamp = pd.to_datetime(timestamp) if timestamp else None
+            
+            # Cek apakah ini data pertama atau ada perubahan signifikan pada LDR atau sudah lewat 1 jam
+            add_record = False
+            
+            # Jika ini data pertama, tambahkan
+            if previous_ldr is None or last_timestamp is None:
+                add_record = True
+            # Atau jika ada perubahan signifikan pada LDR (crossing 1000 threshold)
+            elif (previous_ldr < 1000 and current_ldr >= 1000) or (previous_ldr >= 1000 and current_ldr < 1000):
+                add_record = True
+                # Jika transisi dari < 1000 ke >= 1000, tambah counter obat
                 if previous_ldr < 1000 and current_ldr >= 1000:
                     obat_count += 1
+            # Atau jika sudah lebih dari 1 jam sejak update terakhir
+            elif current_timestamp and last_timestamp and (current_timestamp - last_timestamp).total_seconds() >= 3600:  # 3600 seconds = 1 hour
+                add_record = True
+            
             previous_ldr = current_ldr
 
-            # Tambahkan jumlah obat dan waktu yang disesuaikan (ditambah 7 jam)
-            timestamp = record.get('timestamp')
+            # Tambahkan jumlah obat dan waktu yang disesuaikan
             if timestamp:
                 adjusted_timestamp = pd.to_datetime(timestamp) + timedelta(hours=7)
                 changes['timestamp'] = adjusted_timestamp
@@ -96,7 +124,11 @@ def get_sensor_history(limit=100):
                 changes['timestamp'] = None
 
             changes['jumlah obat diminum'] = obat_count
-            filtered_changes.append(changes)
+            
+            # Hanya tambahkan record jika perlu
+            if add_record:
+                filtered_changes.append(changes)
+                last_timestamp = current_timestamp  # Update the last timestamp we added
 
         return pd.DataFrame(filtered_changes)
     except Exception as e:
@@ -116,16 +148,33 @@ def insert_sensor_data(temperature, humidity, ldr_value):
     except Exception as e:
         st.error(f"Gagal menyimpan data sensor: {str(e)}")
 
-def generate_medical_questions(history):
+def generate_medical_questions(history, sensor_data=None):
+    """Generate medical questions based on history and sensor data"""
+    
+    # Include sensor data in prompt if available
+    sensor_info = ""
+    if sensor_data is not None:
+        sensor_info = f"""
+        Data Sensor Terbaru:
+        - Suhu: {sensor_data.get('temperature', 'N/A')} °C
+        - Kelembaban: {sensor_data.get('humidity', 'N/A')}%
+        - Nilai LDR (Intensitas Cahaya): {sensor_data.get('ldr_value', 'N/A')}
+        """
+    
     prompt = f"""
     Anda adalah dokter profesional. Buat 3-5 pertanyaan spesifik tentang gejala 
-    yang mungkin terkait dengan riwayat penyakit berikut:
+    yang mungkin terkait dengan riwayat penyakit berikut dan data sensor terbaru:
     
     Riwayat Pasien: {history}
+    {sensor_info}
     
     Format output:
     - Apakah Anda mengalami [gejala spesifik]?
     - Apakah Anda merasa [gejala spesifik]?
+    
+    Perhatikan data sensor dalam membuat pertanyaan yang relevan.
+    Misalnya, jika suhu tinggi, tanyakan tentang gejala demam. 
+    Jika kelembaban rendah, tanyakan tentang gejala kulit kering.
     
     Hanya berikan list pertanyaan tanpa penjelasan tambahan.
     """
@@ -140,6 +189,35 @@ def generate_medical_questions(history):
 def generate_recommendations():
     """Generate personalized recommendations"""
     try:
+        # Get latest sensor data
+        latest_sensor_data = get_sensor_data()
+        
+        # Get medication consumption history
+        medication_info = ""
+        obat_count = 0
+        temp_avg = 0
+        
+        # Get medication history and temperature data from sensor history
+        if st.session_state.sensor_history is not None and not st.session_state.sensor_history.empty:
+            df = st.session_state.sensor_history
+            obat_count = df['jumlah obat diminum'].max() if 'jumlah obat diminum' in df.columns else 0
+            temp_avg = df['temperature'].mean() if 'temperature' in df.columns else 0
+            
+            medication_info = f"""
+            4. Informasi Penggunaan Obat:
+               - Total obat yang telah diminum: {obat_count}
+               - Rata-rata suhu penyimpanan: {temp_avg:.1f} °C
+            """
+        
+        sensor_info = ""
+        if latest_sensor_data:
+            sensor_info = f"""
+            3. Data Sensor Terbaru:
+               - Suhu: {latest_sensor_data.get('temperature', 'N/A')} °C
+               - Kelembaban: {latest_sensor_data.get('humidity', 'N/A')}%
+               - Nilai LDR: {latest_sensor_data.get('ldr_value', 'N/A')}
+            """
+            
         history = st.session_state.medical_history or "Tidak ada riwayat"
         symptoms = "\n".join([
             f"{q} - {'Ya' if a else 'Tidak'}" 
@@ -147,19 +225,24 @@ def generate_recommendations():
         ])
         
         prompt = f"""
-        Analisis riwayat medis dan gejala berikut:
+        Analisis riwayat medis, gejala, data sensor, dan kepatuhan penggunaan obat berikut:
         
         1. Riwayat Medis: {history}
         2. Gejala:
         {symptoms}
+        {sensor_info}
+        {medication_info}
         
         Berikan rekomendasi dalam Bahasa Indonesia dengan format:
-        - Analisis kondisi
+        - Analisis kondisi kesehatan
+        - Evaluasi kepatuhan penggunaan obat (apakah jumlah obat yang diminum sesuai dengan kebutuhan)
+        - Analisis kondisi penyimpanan obat (evaluasi suhu penyimpanan, idealnya 15-25°C)
         - Tindakan medis yang diperlukan
         - Langkah pencegahan
         - Rekomendasi dokter spesialis (jika perlu)
         - Tips perawatan mandiri
         
+        Pertimbangkan data sensor dan konsumsi obat dalam analisis Anda.
         Gunakan format markdown dengan poin-point jelas.
         """
         
@@ -224,6 +307,20 @@ def medical_history_page():
     """Halaman Riwayat Medis"""
     st.title("📋 Riwayat Medis")
     
+    # Get latest sensor data
+    latest_sensor_data = get_sensor_data()
+    
+    # Display sensor information if available
+    if latest_sensor_data:
+        with st.expander("Data Sensor Medibox", expanded=True):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Suhu", f"{latest_sensor_data.get('temperature', 'N/A')} °C")
+            with col2:
+                st.metric("Kelembaban", f"{latest_sensor_data.get('humidity', 'N/A')}%")
+            with col3:
+                st.metric("Intensitas Cahaya", latest_sensor_data.get('ldr_value', 'N/A'))
+    
     with st.form("medical_form"):
         st.write("Mohon isi informasi berikut!")
         history = st.text_area(
@@ -234,7 +331,8 @@ def medical_history_page():
         
         if st.form_submit_button("Lanjutkan"):
             if history.strip():
-                questions = generate_medical_questions(history)
+                # Pass sensor data to question generator
+                questions = generate_medical_questions(history, latest_sensor_data)
                 if questions:
                     st.session_state.generated_questions = questions
                     st.session_state.page = 'questioning'
