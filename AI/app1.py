@@ -16,7 +16,7 @@ genai.configure(api_key=api_key)
 model = genai.GenerativeModel('gemini-2.0-flash')
 
 # MongoDB Config
-MONGO_URI = "mongodb+srv://bramantyo989:jkGjM7paFoethotj@cluster0.zgafu.mongodb.net/?appName=Cluster0"
+MONGO_URI = st.secrets["MONGO_URI"]
 client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
 db = client["SentinelSIC"]
 collection = db["SensorSentinel"]
