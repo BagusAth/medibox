@@ -4,7 +4,7 @@ from pymongo import MongoClient
 from bson.json_util import dumps
 import certifi
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 
 # ===========================
@@ -20,20 +20,23 @@ MONGO_URI = st.secrets["MONGO_URI"]
 client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
 db = client["SentinelSIC"]
 collection = db["SensorSentinel"]
+boxcfg_coll = db["IdUserBox"]  # Koleksi konfigurasi kotak
 
 # Fungsi untuk mendapatkan timestamp lokal
 def get_local_timestamp():
-    # Ubah sesuai zona waktu lokal yang diinginkan, misal Asia/Jakarta
     local_tz = pytz.timezone("Asia/Jakarta")
     timestamp = datetime.now(local_tz)
-    # Format timestamp sebagai string (bisa juga dikembalikan sebagai objek datetime jika perlu)
     return timestamp.strftime("%Y-%m-%d %H:%M:%S")
 
 # ===========================
 # PENGATURAN SESSION STATE
 # ===========================
 if 'page' not in st.session_state:
-    st.session_state.page = 'main'
+    st.session_state.page = 'login'
+if 'box_id' not in st.session_state:
+    st.session_state.box_id = None
+if 'box_cfg' not in st.session_state:
+    st.session_state.box_cfg = {}
 if 'medical_history' not in st.session_state:
     st.session_state.medical_history = ''
 if 'generated_questions' not in st.session_state:
@@ -46,6 +49,21 @@ if 'sensor_history' not in st.session_state:
     st.session_state.sensor_history = None
 if 'reset_obat_count' not in st.session_state:
     st.session_state.reset_obat_count = False
+if 'show_healthy_message' not in st.session_state:
+    st.session_state.show_healthy_message = False
+
+# Check for URL parameters to auto-login
+if 'box_id' in st.query_params and st.session_state.page == 'login':
+    box_id = st.query_params['box_id']
+    # Verify the box_id exists in the database
+    cfg = boxcfg_coll.find_one({"box_id": box_id})
+    if cfg:
+        st.session_state.box_id = box_id
+        st.session_state.box_cfg = cfg
+        st.session_state.page = 'confirm_config'  # Navigate to confirm page instead of directly to config
+        st.rerun()
+    else:
+        st.error(f"❌ ID Kotak '{box_id}' tidak ditemukan dalam database.")
 
 # ===========================
 # FUNGSI PENDUKUNG
@@ -57,8 +75,6 @@ def get_sensor_data():
     except Exception as e:
         st.error(f"Gagal mengambil data dari MongoDB: {str(e)}")
         return None
-
-from datetime import timedelta
 
 def get_sensor_history(limit=2000):
     try:
@@ -253,40 +269,154 @@ def generate_recommendations():
         return None
 
 # ===========================
+# HALAMAN LOGIN DAN KONFIGURASI
+# ===========================
+def login_page():
+    st.title("🔐 Login Kotak Obat")
+    with st.form("login_form"):
+        box_id = st.text_input("Masukkan ID Kotak")
+        submitted = st.form_submit_button("Masuk")
+        if submitted:
+            if not box_id.strip():
+                st.warning("ID tidak boleh kosong")
+            else:
+                cfg = boxcfg_coll.find_one({"box_id": box_id})
+                if cfg is None:
+                    st.error("❌ ID Kotak tidak terdaftar. Silakan periksa kembali ID anda.")
+                else:
+                    st.session_state.box_id = box_id
+                    st.session_state.box_cfg = cfg
+                    st.session_state.page = 'confirm_config'  # Changed from 'config' to 'confirm_config'
+                    st.rerun()
+
+def confirm_config_page():
+    """Halaman konfirmasi untuk mengubah konfigurasi atau langsung ke halaman utama"""
+    st.title("✅ Login Berhasil")
+    
+    # Display current box configuration
+    cfg = st.session_state.box_cfg
+    
+    st.subheader(f"📦 Informasi Kotak: {st.session_state.box_id}")
+    
+    # Check if penyakit/kondisi is configured
+    nama_penyakit = cfg.get('nama_penyakit', '')
+    is_condition_set = nama_penyakit and nama_penyakit.strip() != '' and nama_penyakit.lower() != 'belum diatur'
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.info("**Konfigurasi Saat Ini:**")
+        st.write(f"**Penyakit/Kondisi:** {cfg.get('nama_penyakit', 'Belum diatur')}")
+        st.write(f"**Nama Obat:** {cfg.get('medication_name', 'Belum diatur')}")
+        st.write(f"**Total Obat:** {cfg.get('total_obat', 0)}")
+        
+        # Format last updated time if available
+        last_updated = cfg.get('last_updated', None)
+        if last_updated:
+            try:
+                # If it's already a datetime object
+                if isinstance(last_updated, datetime):
+                    # Add 7 hours for Asia/Jakarta timezone
+                    adjusted_datetime = last_updated + timedelta(hours=7)
+                    last_updated_str = adjusted_datetime.strftime("%d %b %Y, %H:%M")
+                else:
+                    # Try to parse from string, then add 7 hours
+                    parsed_datetime = datetime.fromisoformat(str(last_updated))
+                    adjusted_datetime = parsed_datetime + timedelta(hours=7)
+                    last_updated_str = adjusted_datetime.strftime("%d %b %Y, %H:%M")
+            except:
+                last_updated_str = str(last_updated)
+            st.write(f"**Terakhir Diperbarui:** {last_updated_str}")
+    
+    # Display a warning if condition is not set
+    if not is_condition_set:
+        st.warning("⚠️ Informasi penyakit/kondisi belum diatur. Anda perlu mengatur konfigurasi terlebih dahulu.")
+        
+    # Action buttons
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("✏️ Ubah Konfigurasi", type="primary"):
+            st.session_state.page = 'config'
+            st.rerun()
+    
+    # Only show the direct to app button if condition is set
+    with col2:
+        if is_condition_set:
+            if st.button("➡️ Langsung ke Aplikasi"):
+                st.session_state.page = 'main'
+                st.rerun()
+
+def config_page():
+    st.title(f"⚙️ Konfigurasi Kotak: {st.session_state.box_id}")
+    cfg = st.session_state.box_cfg or {}
+    with st.form("cfg_form"):
+        nama_penyakit = st.text_input("Nama Penyakit/Kondisi", 
+                                     value=cfg.get("nama_penyakit", ""),
+                                     help="Kondisi medis yang sedang ditangani")
+        med_name = st.text_input("Nama Obat", value=cfg.get("medication_name", ""))
+        storage = st.text_area("Aturan Penyimpanan", value=cfg.get("storage_rules", ""), height=80)
+        dosage = st.text_area("Aturan Minum", value=cfg.get("dosage_rules", ""), height=80)
+        
+        # New fields for total_obat and nama_penyakit
+        total_obat = st.number_input("Total Obat", 
+                                    min_value=0, 
+                                    value=cfg.get("total_obat", 0),
+                                    help="Jumlah total obat dalam kotak")
+        
+        
+        
+        submitted = st.form_submit_button("Simpan Konfigurasi")
+        if submitted:
+            now = datetime.now(pytz.timezone("Asia/Jakarta"))
+            boxcfg_coll.update_one(
+                {"box_id": st.session_state.box_id},
+                {"$set": {
+                    "nama_penyakit": nama_penyakit,
+                    "medication_name": med_name,
+                    "storage_rules": storage,
+                    "dosage_rules": dosage,
+                    "total_obat": int(total_obat),  # Ensure it's saved as int32
+                    "last_updated": now
+                }},
+                upsert=True
+            )
+            st.success("✅ Konfigurasi disimpan")
+            # langsung lanjut ke halaman utama
+            st.session_state.page = 'main'
+            st.rerun()  # Add rerun here
+
+    if st.button("Ganti Kotak"):
+        for k in ['box_id','box_cfg','sensor_history']:
+            st.session_state.pop(k, None)
+        st.session_state.page = 'login'
+        st.rerun()  # Add rerun here
+
+# ===========================
 # HALAMAN APLIKASI
 # ===========================
 def main_page():
-    """Halaman Utama"""
     st.title("🩺 Aplikasi Pemeriksaan Kesehatan")
+    st.markdown(f"**Kotak ID:** {st.session_state.box_id}")
+    if st.button("Ganti Kotak", key="change_box"): 
+        for k in ['box_id','box_cfg','sensor_history']:
+            st.session_state.pop(k, None)
+        st.session_state.page = 'login'
+        st.rerun()  # Add rerun here
     st.header("Apakah kamu merasa sakit hari ini?")
-    
-    # Inisialisasi session state
-    if 'show_healthy_message' not in st.session_state:
-        st.session_state.show_healthy_message = False
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Ya", help="Klik jika merasa tidak sehat", type="primary"):
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Ya", type="primary"): 
             st.session_state.page = 'medical_history'
-            st.session_state.show_healthy_message = False
-            st.rerun()
-    with col2:
-        if st.button("Tidak", help="Klik jika merasa sehat"):
+            st.rerun()  # Add rerun here
+    with c2:
+        if st.button("Tidak"): 
             st.session_state.show_healthy_message = True
-            st.rerun()
+            st.rerun()  # Add rerun here
     if st.session_state.show_healthy_message:
-        st.success("""
-            🎉 **Bagus! Tetap jaga kesehatan dan perhatikan kondisi tubuh Anda.**\n\n
-            🥗 *Tetap patuhi pola hidup sehat!*\n\n
-            ⚠️ Jika ada gejala yang muncul, silakan kembali ke aplikasi ini.
-        """)
-        # Tombol untuk menutup pesan
+        st.success("🎉 Bagus! Tetap jaga kesehatan...")
         if st.button("Tutup Pesan", key="close_message"):
             st.session_state.show_healthy_message = False
-            st.rerun()
     st.divider()
     st.subheader("📚 Riwayat Perubahan Sensor")
-    # Tombol Refresh Manual untuk data sensor historis
     if st.button("🔃 Refresh Riwayat Sensor"):
         new_history = get_sensor_history()
         if not new_history.empty:
@@ -299,7 +429,6 @@ def main_page():
 
     if st.session_state.sensor_history is None or st.session_state.sensor_history.empty:
         st.session_state.sensor_history = get_sensor_history()
-
     df = st.session_state.sensor_history
     st.dataframe(df.sort_values(by="timestamp", ascending=False), use_container_width=True)
 
@@ -343,77 +472,74 @@ def medical_history_page():
                     st.error("Gagal membuat pertanyaan. Silakan coba lagi.")
             else:
                 st.warning("Mohon isi riwayat medis Anda terlebih dahulu")
-
-def questioning_page():
-    """Halaman Pertanyaan Gejala"""
-    st.title("🔍 Pemeriksaan Gejala")
     
-    if st.session_state.current_question < len(st.session_state.generated_questions):
-        current_q = st.session_state.generated_questions[st.session_state.current_question]
-        
-        # Header Progress
-        st.subheader(f"Pertanyaan {st.session_state.current_question + 1}/{len(st.session_state.generated_questions)}")
-        st.progress((st.session_state.current_question + 1)/len(st.session_state.generated_questions))
-        
-        # Pertanyaan
-        st.markdown(f"**{current_q.replace('-', '•')}**")
-        
-        # Tombol Jawaban
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Ya ✅", key=f"yes_{st.session_state.current_question}"):
-                st.session_state.answers.append(True)
-                st.session_state.current_question += 1
-                st.rerun()
-        with col2:
-            if st.button("Tidak ❌", key=f"no_{st.session_state.current_question}"):
-                st.session_state.answers.append(False)
-                st.session_state.current_question += 1
-                st.rerun()
-    else:
-        st.session_state.page = 'results'
-        st.rerun()
-
-def results_page():
-    """Halaman Hasil Akhir"""
-    st.title("📝 Hasil Analisis")
-    
-    # Generate Rekomendasi
-    with st.spinner("🔄 Membuat analisis khusus untuk Anda..."):
-        recommendations = generate_recommendations()
-    
-    # Tampilkan Hasil
-    st.subheader("📊 Ringkasan Jawaban")
-    st.write(f"Total gejala yang dialami: {sum(st.session_state.answers)} dari {len(st.session_state.answers)}")
-    
-    st.subheader("💡 Rekomendasi Medis")
-    if recommendations:
-        st.markdown(recommendations)
-    else:
-        st.warning("""
-        **Rekomendasi Umum:**
-        - Konsultasikan ke dokter umum terdekat
-        - Pantau perkembangan gejala
-        - Istirahat yang cukup
-        - Hindari aktivitas berat
-        """)
-    
-    # Tombol Reset
-    st.divider()
-    if st.button("🔄 Mulai Pemeriksaan Baru"):
+    # Add back button outside the form
+    if st.button("« Kembali ke Halaman Utama", key="back_to_main"):
         st.session_state.page = 'main'
         st.rerun()
 
-# Jika ada halaman sensor terpisah (jika diperlukan)
-def sensor_page():
-    st.title("📊 Data Sensor")
-    # Implementasi halaman sensor jika diperlukan
-    st.write("Halaman ini untuk data sensor secara khusus.")
+def questioning_page():
+    st.title("🔍 Pemeriksaan Gejala")
+    idx = st.session_state.current_question
+    qs = st.session_state.generated_questions
+    if idx < len(qs):
+        st.subheader(f"Pertanyaan {idx+1}/{len(qs)}")
+        st.progress((idx+1)/len(qs))
+        st.markdown(f"**{qs[idx].replace('-', '•')}**")
+        c1, c2 = st.columns(2)
+        if c1.button("Ya ✅", key=f"yes_{idx}"):
+            st.session_state.answers.append(True)
+            st.session_state.current_question += 1
+            if st.session_state.current_question >= len(qs):
+                st.session_state.page = 'results'
+                st.rerun()  # Add rerun here
+            else:
+                st.rerun()  # Add rerun for next question
+        if c2.button("Tidak ❌", key=f"no_{idx}"):
+            st.session_state.answers.append(False)
+            st.session_state.current_question += 1
+            if st.session_state.current_question >= len(qs):
+                st.session_state.page = 'results'
+                st.rerun()  # Add rerun here
+            else:
+                st.rerun()  # Add rerun for next question
+    else:
+        st.session_state.page = 'results'
+        st.rerun()  # Add rerun here
+
+
+def results_page():
+    st.title("📝 Hasil Analisis")
+    with st.spinner("🔄 Membuat analisis khusus untuk Anda..."):
+        rec = generate_recommendations()
+    st.subheader("📊 Ringkasan Jawaban")
+    st.write(f"Total gejala yang dialami: {sum(st.session_state.answers)} dari {len(st.session_state.answers)}")
+    st.subheader("💡 Rekomendasi Medis")
+    if rec:
+        st.markdown(rec)
+    else:
+        st.warning(
+            "**Rekomendasi Umum:**\n" +
+            "- Konsultasikan ke dokter umum terdekat\n" +
+            "- Pantau perkembangan gejala\n" +
+            "- Istirahat yang cukup\n" +
+            "- Hindari aktivitas berat"
+        )
+    st.divider()
+    if st.button("🔄 Mulai Pemeriksaan Baru"):
+        st.session_state.page = 'main'
+        st.rerun()  # Add rerun here
 
 # ===========================
-# ROUTING HALAMAN
+# ROUTING
 # ===========================
-if st.session_state.page == 'main':
+if st.session_state.page == 'login':
+    login_page()
+elif st.session_state.page == 'confirm_config':
+    confirm_config_page()
+elif st.session_state.page == 'config':
+    config_page()
+elif st.session_state.page == 'main':
     main_page()
 elif st.session_state.page == 'medical_history':
     medical_history_page()
@@ -421,11 +547,9 @@ elif st.session_state.page == 'questioning':
     questioning_page()
 elif st.session_state.page == 'results':
     results_page()
-elif st.session_state.page == 'sensor':
-    sensor_page()
 
 # ===========================
 # FOOTER
 # ===========================
 st.divider()
-st.caption("⚠️ Aplikasi ini bukan pengganti diagnosis medis profesional. Selalu konsultasikan dengan tenaga kesehatan terkait kondisi medis Anda.")
+st.caption("⚠️ Aplikasi ini bukan pengganti diagnosis medis profesional.")
