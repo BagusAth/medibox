@@ -7,6 +7,14 @@ import pandas as pd
 from datetime import datetime, timedelta
 import pytz
 
+st.set_page_config(
+    menu_items={              
+        "Get Help": None,
+        "Report a bug": None,
+        "About": None
+    }
+)
+
 # ===========================
 # KONFIGURASI AWAL
 # ===========================
