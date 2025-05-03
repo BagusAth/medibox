@@ -251,7 +251,7 @@ def generate_recommendations():
         
         # Format configuration information
         config_info = f"""
-        4. Informasi Konfigurasi Medibox:
+        4. Informasi Kotak Medibox:
            - Penyakit/Kondisi: {cfg.get('nama_penyakit', 'Tidak diatur')}
            - Nama Obat: {cfg.get('medication_name', 'Tidak diatur')}
            - Jumlah Obat: {cfg.get('Jumlah_obat', 0)}
@@ -351,19 +351,33 @@ def confirm_config_page():
     # Display current box configuration
     cfg = st.session_state.box_cfg
     
-    st.subheader(f"📦 Informasi Kotak: {st.session_state.box_id}")
-    
-    # Check if penyakit/kondisi is configured
+    # Check if all required fields are configured (except riwayat_alergi)
     nama_penyakit = cfg.get('nama_penyakit', '')
-    is_condition_set = nama_penyakit and nama_penyakit.strip() != '' and nama_penyakit.lower() != 'belum diatur'
+    medication_name = cfg.get('medication_name', '')
+    usia = cfg.get('usia', None)
+    jenis_kelamin = cfg.get('jenis_kelamin', '')
+    storage_rules = cfg.get('storage_rules', '')
+    dosage_rules = cfg.get('dosage_rules', '')
+    jumlah_obat = cfg.get('Jumlah_obat', None)
+    
+    # Check each field is properly set
+    is_condition_set = (
+        nama_penyakit and nama_penyakit.strip() != '' and nama_penyakit.lower() != 'belum diatur'
+        and medication_name and medication_name.strip() != '' and medication_name.lower() != 'belum diatur'
+        and usia is not None
+        and jenis_kelamin and jenis_kelamin.strip() != '' and jenis_kelamin.lower() != 'belum diatur'
+        and storage_rules and storage_rules.strip() != '' and storage_rules.lower() != 'belum diatur'
+        and dosage_rules and dosage_rules.strip() != '' and dosage_rules.lower() != 'belum diatur'
+        and jumlah_obat is not None and jumlah_obat >= 0
+    )
     
     col1, col2 = st.columns(2)
     with col1:
-        st.info("**Konfigurasi Saat Ini:**")
+        st.info("**Informasi Saat Ini:**")
         st.write(f"**Penyakit/Kondisi:** {cfg.get('nama_penyakit', 'Belum diatur')}")
         st.write(f"**Nama Obat:** {cfg.get('medication_name', 'Belum diatur')}")
         st.write(f"**Jumlah Obat:** {cfg.get('Jumlah_obat', 0)}")
-        st.write(f"**Usia:** {cfg.get('usia', 'Belum diatur')} tahun")
+        st.write(f"**Usia:** {cfg.get('usia', 'Belum diatur')}")
         st.write(f"**Jenis Kelamin:** {cfg.get('jenis_kelamin', 'Belum diatur')}")
         st.write(f"**Riwayat Alergi:** {cfg.get('riwayat_alergi', 'Belum diatur')}")
         
@@ -383,12 +397,12 @@ def confirm_config_page():
             st.write(f"**Terakhir Diperbarui:** {last_updated_str}")   
     # Display a warning if condition is not set
     if not is_condition_set:
-        st.warning("⚠️ Informasi penyakit/kondisi belum diatur. Anda perlu mengatur konfigurasi terlebih dahulu.")
+        st.warning("⚠️ Informasi belum lengkap. Anda perlu mengatur semua informasi terlebih dahulu.")
         
     # Action buttons
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("✏️ Ubah Konfigurasi", type="primary"):
+        if st.button("✏️ Ubah Informasi", type="primary"):
             st.session_state.page = 'config'
             st.rerun()
     
@@ -400,7 +414,7 @@ def confirm_config_page():
                 st.rerun()
 
 def config_page():
-    st.title(f"⚙️ Konfigurasi Kotak: {st.session_state.box_id}")
+    st.title(f"⚙️ Informasi Kotak Obat")
     cfg = st.session_state.box_cfg or {}
     with st.form("cfg_form"):
         nama_penyakit = st.text_input("Nama Penyakit/Kondisi", 
@@ -440,7 +454,7 @@ def config_page():
                                     value=cfg.get("Jumlah_obat", 0),
                                     help="Jumlah obat dalam kotak")
         
-        submitted = st.form_submit_button("Simpan Konfigurasi")
+        submitted = st.form_submit_button("Simpan Informasi")
         if submitted:
             now = datetime.now(pytz.timezone("Asia/Jakarta"))
             boxcfg_coll.update_one(
@@ -458,7 +472,7 @@ def config_page():
                 }},
                 upsert=True
             )
-            st.success("✅ Konfigurasi disimpan")
+            st.success("✅ Informasi disimpan")
             # langsung lanjut ke halaman utama
             st.session_state.page = 'main'
             st.rerun()
@@ -468,13 +482,27 @@ def config_page():
 # ===========================
 def main_page():
     st.title("🩺 Aplikasi Pemeriksaan Kesehatan")
-    st.markdown(f"**Kotak ID:** {st.session_state.box_id}")
-    if st.button("Ganti Konfigurasi", key="change_box"): 
+    
+    
+    # Display medicine info from box config
+    cfg = st.session_state.box_cfg
+    if cfg:
+        with st.expander("💊 Informasi Obat", expanded=True):
+            st.write(f"**Penyakit/Kondisi   :** {cfg.get('nama_penyakit', 'Belum diatur')}")
+            st.write(f"**Nama Obat          :** {cfg.get('medication_name', 'Belum diatur')}")
+            st.write(f"**Jumlah Obat        :** {cfg.get('Jumlah_obat', 0)}")
+            st.write(f"**Usia               :** {cfg.get('usia', 'Belum diatur')} tahun")
+            st.write(f"**Jenis Kelamin      :** {cfg.get('jenis_kelamin', 'Belum diatur')}")
+            st.write(f"**Riwayat Alergi     :** {cfg.get('riwayat_alergi', 'Belum diatur')}")
+            
+            dosage = cfg.get('dosage_rules', '')
+            if dosage:
+                st.write(f"**Aturan Minum        :** {dosage}")
+    if st.button("Ganti Informasi Pengguna", key="change_box"): 
         for k in ['box_id','box_cfg','sensor_history']:
             st.session_state.pop(k, None)
         st.session_state.page = 'login'
         st.rerun()
-        
     st.header("Apakah kamu merasa sakit hari ini?")
     c1, c2 = st.columns(2)
     with c1:
@@ -490,21 +518,7 @@ def main_page():
         if st.button("Tutup Pesan", key="close_message"):
             st.session_state.show_healthy_message = False
             
-    # Display medicine info from box config
-    cfg = st.session_state.box_cfg
-    if cfg:
-        with st.expander("💊 Informasi Obat", expanded=True):
-            st.write(f"**Penyakit/Kondisi:** {cfg.get('nama_penyakit', 'Belum diatur')}")
-            st.write(f"**Nama Obat:** {cfg.get('medication_name', 'Belum diatur')}")
-            st.write(f"**Jumlah Obat:** {cfg.get('Jumlah_obat', 0)}")
-            st.write(f"**Usia:** {cfg.get('usia', 'Belum diatur')} tahun")
-            st.write(f"**Jenis Kelamin:** {cfg.get('jenis_kelamin', 'Belum diatur')}")
-            st.write(f"**Riwayat Alergi:** {cfg.get('riwayat_alergi', 'Belum diatur')}")
-            
-            dosage = cfg.get('dosage_rules', '')
-            if dosage:
-                st.write("**Aturan Minum:**")
-                st.write(dosage)
+    
 
 def medical_history_page():
     """Halaman Riwayat Medis"""
@@ -515,7 +529,7 @@ def medical_history_page():
     
     # Tampilkan data konfigurasi sebagai pengganti data sensor
     if cfg:
-        with st.expander("📦 Informasi Konfigurasi Medibox", expanded=True):
+        with st.expander("📦 Informasi Kotak Medibox", expanded=True):
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown(f"**Penyakit/Kondisi:** {cfg.get('nama_penyakit', 'Belum diatur')}")
@@ -652,11 +666,11 @@ def sensor_history_page():
             filtered_df = df[df['timestamp'] > adjusted_last_updated]
             
             # Show information about filtering
-            st.info(f"📅 Menampilkan data setelah konfigurasi terakhir: {adjusted_last_updated.strftime('%d %b %Y, %H:%M')}")
+            st.info(f"📅 Menampilkan data setelah perubahan terakhir: {adjusted_last_updated.strftime('%d %b %Y, %H:%M')}")
             
             # If no data after last_updated
             if filtered_df.empty:
-                st.warning("Tidak ada data sensor baru sejak konfigurasi terakhir.")
+                st.warning("Tidak ada data sensor baru sejak perubahan terakhir.")
             else:
                 # Remove specific tracking columns
                 if 'obat_diambil' in filtered_df.columns:
@@ -700,7 +714,6 @@ def sensor_history_page():
 if st.session_state.page not in ['login', 'config', 'confirm_config']:
     st.sidebar.title("🔀 Menu")
     if st.session_state.box_id:  # Only show navigation when logged in
-        st.sidebar.write(f"**Kotak ID:** {st.session_state.box_id}")
         menu = st.sidebar.radio("Pilih Halaman:", ["🩺 Pemeriksaan Kesehatan", "📚 Riwayat Sensor"])
     else:
         # Jika belum login, tombol menu tidak aktif
