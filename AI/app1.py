@@ -31,26 +31,22 @@ def get_local_timestamp():
 # ===========================
 # PENGATURAN SESSION STATE
 # ===========================
-if 'page' not in st.session_state:
-    st.session_state.page = 'login'
-if 'box_id' not in st.session_state:
-    st.session_state.box_id = None
-if 'box_cfg' not in st.session_state:
-    st.session_state.box_cfg = {}
-if 'medical_history' not in st.session_state:
-    st.session_state.medical_history = ''
-if 'generated_questions' not in st.session_state:
-    st.session_state.generated_questions = []
-if 'answers' not in st.session_state:
-    st.session_state.answers = []
-if 'current_question' not in st.session_state:
-    st.session_state.current_question = 0
-if 'sensor_history' not in st.session_state:
-    st.session_state.sensor_history = None
-if 'reset_obat_count' not in st.session_state:
-    st.session_state.reset_obat_count = False
-if 'show_healthy_message' not in st.session_state:
-    st.session_state.show_healthy_message = False
+session_defaults = {
+    'page': 'login',
+    'box_id': None,
+    'box_cfg': {},
+    'medical_history': '',
+    'generated_questions': [],
+    'answers': [],
+    'current_question': 0,
+    'sensor_history': None,
+    'reset_obat_count': False,
+    'show_healthy_message': False
+}
+
+for key, val in session_defaults.items():
+    if key not in st.session_state:
+        st.session_state[key] = val
 
 # Check for URL parameters to auto-login
 if 'box_id' in st.query_params and st.session_state.page == 'login':
@@ -88,10 +84,33 @@ def get_sensor_history(limit=2000):
         obat_count = 0  # Inisialisasi counter untuk jumlah obat
         previous_ldr = None  # Nilai ldr sebelumnya
         last_timestamp = None  # Track the last time we added a record
+        medications_taken = 0  # Jumlah obat yang telah diambil
+        
+        # Ambil informasi last_updated dan jumlah obat dari konfigurasi box
+        box_config = None
+        if st.session_state.box_id and st.session_state.box_cfg:
+            box_config = st.session_state.box_cfg
+            last_updated = box_config.get('last_updated')
+            current_med_count = box_config.get('Jumlah_obat', 0)
+            
+            # Convert last_updated ke format datetime jika ada
+            if last_updated:
+                if isinstance(last_updated, datetime):
+                    config_last_updated = last_updated
+                else:
+                    try:
+                        config_last_updated = datetime.fromisoformat(str(last_updated))
+                    except:
+                        config_last_updated = None
+            else:
+                config_last_updated = None
+        else:
+            config_last_updated = None
+            current_med_count = 0
         
         # Reset counter jika diminta
         if st.session_state.reset_obat_count:
-            obat_count = 0
+            medications_taken = 0
             st.session_state.reset_obat_count = False
 
         for record in records:
@@ -101,7 +120,7 @@ def get_sensor_history(limit=2000):
                 changes[key] = current_val
                 last[key] = current_val
 
-            # Logika untuk menghitung penambahan obat
+            # Logika untuk menghitung pengambilan obat
             current_ldr = record.get('ldr_value')
             
             # Tambahkan status kotak (terbuka/tertutup)
@@ -123,9 +142,27 @@ def get_sensor_history(limit=2000):
             # Atau jika ada perubahan signifikan pada LDR (crossing 1000 threshold)
             elif (previous_ldr < 1000 and current_ldr >= 1000) or (previous_ldr >= 1000 and current_ldr < 1000):
                 add_record = True
-                # Jika transisi dari < 1000 ke >= 1000, tambah counter obat
-                if previous_ldr < 1000 and current_ldr >= 1000:
-                    obat_count += 1
+                # Jika transisi dari < 1000 ke >= 1000 (kotak dibuka) 
+                # Dan waktu setelah last_updated konfigurasi
+                if (previous_ldr < 1000 and current_ldr >= 1000 and 
+                    config_last_updated and current_timestamp and 
+                    current_timestamp > config_last_updated):
+                    medications_taken += 1
+                    # Update jumlah obat di database jika perlu
+                    if current_med_count > medications_taken:
+                        new_count = current_med_count - medications_taken
+                        # Hanya update jika telah login dan ada ID kotak
+                        if st.session_state.box_id:
+                            try:
+                                boxcfg_coll.update_one(
+                                    {"box_id": st.session_state.box_id},
+                                    {"$set": {"Jumlah_obat": new_count}}
+                                )
+                                # Update juga di session state
+                                if st.session_state.box_cfg:
+                                    st.session_state.box_cfg["Jumlah_obat"] = new_count
+                            except Exception as e:
+                                st.error(f"Gagal memperbarui jumlah obat: {str(e)}")
             # Atau jika sudah lebih dari 1 jam sejak update terakhir
             elif current_timestamp and last_timestamp and (current_timestamp - last_timestamp).total_seconds() >= 3600:  # 3600 seconds = 1 hour
                 add_record = True
@@ -139,7 +176,10 @@ def get_sensor_history(limit=2000):
             else:
                 changes['timestamp'] = None
 
-            changes['jumlah obat diminum'] = obat_count
+            # Hitung sisa obat yang sebenarnya
+            remaining_meds = max(0, current_med_count - medications_taken)
+            changes['sisa_obat'] = remaining_meds
+            changes['obat_diambil'] = medications_taken
             
             # Hanya tambahkan record jika perlu
             if add_record:
@@ -178,8 +218,8 @@ def generate_medical_questions(history, sensor_data=None):
         """
     
     prompt = f"""
-    Anda adalah dokter profesional. Buat 3-5 pertanyaan spesifik tentang gejala 
-    yang mungkin terkait dengan riwayat penyakit berikut dan data sensor terbaru:
+    Anda adalah dokter profesional. Buat 3-5 pertanyaan dengan jawaban ya atau tidak spesifik tentang gejala 
+    yang mungkin terkait dengan riwayat penyakit berikut dan data terbaru:
     
     Riwayat Pasien: {history}
     {sensor_info}
@@ -188,7 +228,8 @@ def generate_medical_questions(history, sensor_data=None):
     - Apakah Anda mengalami [gejala spesifik]?
     - Apakah Anda merasa [gejala spesifik]?
     
-    Perhatikan data sensor dalam membuat pertanyaan yang relevan.
+    Perhatikan data dalam membuat pertanyaan yang relevan.
+    Asumsikan data selain yang tersedia di atas adalah normal.
     Misalnya, jika suhu tinggi, tanyakan tentang gejala demam. 
     Jika kelembaban rendah, tanyakan tentang gejala kulit kering.
     
@@ -203,37 +244,24 @@ def generate_medical_questions(history, sensor_data=None):
         return []
     
 def generate_recommendations():
-    """Generate personalized recommendations"""
+    """Generate personalized recommendations based on configuration data"""
     try:
-        # Get latest sensor data
-        latest_sensor_data = get_sensor_data()
+        # Get configuration data instead of sensor data
+        cfg = st.session_state.box_cfg or {}
         
-        # Get medication consumption history
-        medication_info = ""
-        obat_count = 0
-        temp_avg = 0
+        # Format configuration information
+        config_info = f"""
+        4. Informasi Konfigurasi Medibox:
+           - Penyakit/Kondisi: {cfg.get('nama_penyakit', 'Tidak diatur')}
+           - Nama Obat: {cfg.get('medication_name', 'Tidak diatur')}
+           - Jumlah Obat: {cfg.get('Jumlah_obat', 0)}
+           - Usia Pasien: {cfg.get('usia', 'Tidak diatur')} tahun
+           - Jenis Kelamin Pasien: {cfg.get('jenis_kelamin', 'Tidak diatur')}
+           - Riwayat Alergi: {cfg.get('riwayat_alergi', 'Tidak diatur')}
+           - Aturan Penyimpanan: {cfg.get('storage_rules', 'Tidak diatur')}
+           - Aturan Minum: {cfg.get('dosage_rules', 'Tidak diatur')}
+        """
         
-        # Get medication history and temperature data from sensor history
-        if st.session_state.sensor_history is not None and not st.session_state.sensor_history.empty:
-            df = st.session_state.sensor_history
-            obat_count = df['jumlah obat diminum'].max() if 'jumlah obat diminum' in df.columns else 0
-            temp_avg = df['temperature'].mean() if 'temperature' in df.columns else 0
-            
-            medication_info = f"""
-            4. Informasi Penggunaan Obat:
-               - Total obat yang telah diminum: {obat_count}
-               - Rata-rata suhu penyimpanan: {temp_avg:.1f} °C
-            """
-        
-        sensor_info = ""
-        if latest_sensor_data:
-            sensor_info = f"""
-            3. Data Sensor Terbaru:
-               - Suhu: {latest_sensor_data.get('temperature', 'N/A')} °C
-               - Kelembaban: {latest_sensor_data.get('humidity', 'N/A')}%
-               - Nilai LDR: {latest_sensor_data.get('ldr_value', 'N/A')}
-            """
-            
         history = st.session_state.medical_history or "Tidak ada riwayat"
         symptoms = "\n".join([
             f"{q} - {'Ya' if a else 'Tidak'}" 
@@ -241,24 +269,22 @@ def generate_recommendations():
         ])
         
         prompt = f"""
-        Analisis riwayat medis, gejala, data sensor, dan kepatuhan penggunaan obat berikut:
+        Analisis riwayat medis, gejala, dan informasi konfigurasi obat berikut:
         
         1. Riwayat Medis: {history}
         2. Gejala:
         {symptoms}
-        {sensor_info}
-        {medication_info}
+        {config_info}
         
         Berikan rekomendasi dalam Bahasa Indonesia dengan format:
         - Analisis kondisi kesehatan
-        - Evaluasi kepatuhan penggunaan obat (apakah jumlah obat yang diminum sesuai dengan kebutuhan)
-        - Analisis kondisi penyimpanan obat (evaluasi suhu penyimpanan, idealnya 15-25°C)
+        - Evaluasi kesesuaian penggunaan obat dengan kondisi pasien
         - Tindakan medis yang diperlukan
         - Langkah pencegahan
         - Rekomendasi dokter spesialis (jika perlu)
         - Tips perawatan mandiri
         
-        Pertimbangkan data sensor dan konsumsi obat dalam analisis Anda.
+        Pertimbangkan informasi konfigurasi obat dalam analisis Anda.
         Gunakan format markdown dengan poin-point jelas.
         """
         
@@ -267,6 +293,35 @@ def generate_recommendations():
     except Exception as e:
         st.error(f"Error generating recommendations: {str(e)}")
         return None
+
+def generate_diet_plan(history):
+    """Generate diet recommendations based on medical history"""
+    # Get configuration data for age and gender
+    cfg = st.session_state.box_cfg or {}
+    usia = cfg.get('usia')
+    jenis_kelamin = cfg.get('jenis_kelamin')
+    riwayat_alergi = cfg.get('riwayat_alergi', 'Tidak ada')
+    
+    prompt = f"""
+    Anda adalah ahli gizi profesional. Berdasarkan riwayat penyakit/kondisi medis berikut,
+    rekomendasikan pola makan harian dengan daftar makanan dan kandungan nutrisinya.
+
+    Riwayat Pasien: {history}
+    Usia Pasien: {usia} tahun
+    Jenis Kelamin Pasien: {jenis_kelamin}
+    Riwayat Alergi: {riwayat_alergi}
+
+    Format output:
+    - Makanan: [nama makanan] - Kandungan: [kalori, protein, lemak, karbohidrat, vitamin/mineral]
+    - Sajikan 3-5 rekomendasi makanan utama.
+    - Hindari makanan yang dapat memicu alergi pasien.
+    """
+    try:
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        st.error(f"Error generating diet plan: {str(e)}")
+        return "Tidak dapat membuat rekomendasi pola makan saat ini."
 
 # ===========================
 # HALAMAN LOGIN DAN KONFIGURASI
@@ -307,7 +362,10 @@ def confirm_config_page():
         st.info("**Konfigurasi Saat Ini:**")
         st.write(f"**Penyakit/Kondisi:** {cfg.get('nama_penyakit', 'Belum diatur')}")
         st.write(f"**Nama Obat:** {cfg.get('medication_name', 'Belum diatur')}")
-        st.write(f"**Total Obat:** {cfg.get('total_obat', 0)}")
+        st.write(f"**Jumlah Obat:** {cfg.get('Jumlah_obat', 0)}")
+        st.write(f"**Usia:** {cfg.get('usia', 'Belum diatur')} tahun")
+        st.write(f"**Jenis Kelamin:** {cfg.get('jenis_kelamin', 'Belum diatur')}")
+        st.write(f"**Riwayat Alergi:** {cfg.get('riwayat_alergi', 'Belum diatur')}")
         
         # Format last updated time if available
         last_updated = cfg.get('last_updated', None)
@@ -316,17 +374,13 @@ def confirm_config_page():
                 # If it's already a datetime object
                 if isinstance(last_updated, datetime):
                     # Add 7 hours for Asia/Jakarta timezone
-                    adjusted_datetime = last_updated + timedelta(hours=7)
-                    last_updated_str = adjusted_datetime.strftime("%d %b %Y, %H:%M")
+                    last_updated_str = (last_updated + timedelta(hours=7)).strftime("%d %b %Y, %H:%M")
                 else:
                     # Try to parse from string, then add 7 hours
-                    parsed_datetime = datetime.fromisoformat(str(last_updated))
-                    adjusted_datetime = parsed_datetime + timedelta(hours=7)
-                    last_updated_str = adjusted_datetime.strftime("%d %b %Y, %H:%M")
+                    last_updated_str = (datetime.fromisoformat(str(last_updated)) + timedelta(hours=7)).strftime("%d %b %Y, %H:%M")
             except:
                 last_updated_str = str(last_updated)
-            st.write(f"**Terakhir Diperbarui:** {last_updated_str}")
-    
+            st.write(f"**Terakhir Diperbarui:** {last_updated_str}")   
     # Display a warning if condition is not set
     if not is_condition_set:
         st.warning("⚠️ Informasi penyakit/kondisi belum diatur. Anda perlu mengatur konfigurasi terlebih dahulu.")
@@ -353,16 +407,38 @@ def config_page():
                                      value=cfg.get("nama_penyakit", ""),
                                      help="Kondisi medis yang sedang ditangani")
         med_name = st.text_input("Nama Obat", value=cfg.get("medication_name", ""))
+        
+        # Add age and gender fields
+        col1, col2 = st.columns(2)
+        with col1:
+            usia = st.number_input("Usia", 
+                                min_value=0, 
+                                max_value=120, 
+                                value=cfg.get("usia", 30),
+                                help="Usia pengguna kotak obat")
+        with col2:
+            gender_options = ["Laki-laki", "Perempuan"]
+            default_idx = 0
+            if "jenis_kelamin" in cfg:
+                if cfg["jenis_kelamin"] in gender_options:
+                    default_idx = gender_options.index(cfg["jenis_kelamin"])
+            jenis_kelamin = st.selectbox("Jenis Kelamin", 
+                                       options=gender_options,
+                                       index=default_idx)
+        
+        # Add riwayat alergi field
+        riwayat_alergi = st.text_area("Riwayat Alergi", 
+                                      value=cfg.get("riwayat_alergi", ""),
+                                      help="Daftar alergi yang dimiliki")
+        
         storage = st.text_area("Aturan Penyimpanan", value=cfg.get("storage_rules", ""), height=80)
         dosage = st.text_area("Aturan Minum", value=cfg.get("dosage_rules", ""), height=80)
         
-        # New fields for total_obat and nama_penyakit
-        total_obat = st.number_input("Total Obat", 
+        # Field for Jumlah_obat
+        Jumlah_obat = st.number_input("Jumlah Obat", 
                                     min_value=0, 
-                                    value=cfg.get("total_obat", 0),
-                                    help="Jumlah total obat dalam kotak")
-        
-        
+                                    value=cfg.get("Jumlah_obat", 0),
+                                    help="Jumlah obat dalam kotak")
         
         submitted = st.form_submit_button("Simpan Konfigurasi")
         if submitted:
@@ -374,7 +450,10 @@ def config_page():
                     "medication_name": med_name,
                     "storage_rules": storage,
                     "dosage_rules": dosage,
-                    "total_obat": int(total_obat),  # Ensure it's saved as int32
+                    "Jumlah_obat": int(Jumlah_obat),
+                    "usia": int(usia),  # Save age
+                    "jenis_kelamin": jenis_kelamin,  # Save gender
+                    "riwayat_alergi": riwayat_alergi,  # Save allergy history
                     "last_updated": now
                 }},
                 upsert=True
@@ -382,13 +461,7 @@ def config_page():
             st.success("✅ Konfigurasi disimpan")
             # langsung lanjut ke halaman utama
             st.session_state.page = 'main'
-            st.rerun()  # Add rerun here
-
-    if st.button("Ganti Kotak"):
-        for k in ['box_id','box_cfg','sensor_history']:
-            st.session_state.pop(k, None)
-        st.session_state.page = 'login'
-        st.rerun()  # Add rerun here
+            st.rerun()
 
 # ===========================
 # HALAMAN APLIKASI
@@ -396,60 +469,64 @@ def config_page():
 def main_page():
     st.title("🩺 Aplikasi Pemeriksaan Kesehatan")
     st.markdown(f"**Kotak ID:** {st.session_state.box_id}")
-    if st.button("Ganti Kotak", key="change_box"): 
+    if st.button("Ganti Konfigurasi", key="change_box"): 
         for k in ['box_id','box_cfg','sensor_history']:
             st.session_state.pop(k, None)
         st.session_state.page = 'login'
-        st.rerun()  # Add rerun here
+        st.rerun()
+        
     st.header("Apakah kamu merasa sakit hari ini?")
     c1, c2 = st.columns(2)
     with c1:
         if st.button("Ya", type="primary"): 
             st.session_state.page = 'medical_history'
-            st.rerun()  # Add rerun here
+            st.rerun()
     with c2:
         if st.button("Tidak"): 
             st.session_state.show_healthy_message = True
-            st.rerun()  # Add rerun here
+            st.rerun()
     if st.session_state.show_healthy_message:
         st.success("🎉 Bagus! Tetap jaga kesehatan...")
         if st.button("Tutup Pesan", key="close_message"):
             st.session_state.show_healthy_message = False
-    st.divider()
-    st.subheader("📚 Riwayat Perubahan Sensor")
-    if st.button("🔃 Refresh Riwayat Sensor"):
-        new_history = get_sensor_history()
-        if not new_history.empty:
-            st.session_state.sensor_history = new_history
-        else:
-            latest_data = get_sensor_data()
-            if latest_data and st.session_state.sensor_history is not None and not st.session_state.sensor_history.empty:
-                st.session_state.sensor_history.loc[st.session_state.sensor_history.index[-1], 'temperature'] = latest_data.get('temperature')
-                st.session_state.sensor_history.loc[st.session_state.sensor_history.index[-1], 'humidity'] = latest_data.get('humidity')
-
-    if st.session_state.sensor_history is None or st.session_state.sensor_history.empty:
-        st.session_state.sensor_history = get_sensor_history()
-    df = st.session_state.sensor_history
-    st.dataframe(df.sort_values(by="timestamp", ascending=False), use_container_width=True)
+            
+    # Display medicine info from box config
+    cfg = st.session_state.box_cfg
+    if cfg:
+        with st.expander("💊 Informasi Obat", expanded=True):
+            st.write(f"**Penyakit/Kondisi:** {cfg.get('nama_penyakit', 'Belum diatur')}")
+            st.write(f"**Nama Obat:** {cfg.get('medication_name', 'Belum diatur')}")
+            st.write(f"**Jumlah Obat:** {cfg.get('Jumlah_obat', 0)}")
+            st.write(f"**Usia:** {cfg.get('usia', 'Belum diatur')} tahun")
+            st.write(f"**Jenis Kelamin:** {cfg.get('jenis_kelamin', 'Belum diatur')}")
+            st.write(f"**Riwayat Alergi:** {cfg.get('riwayat_alergi', 'Belum diatur')}")
+            
+            dosage = cfg.get('dosage_rules', '')
+            if dosage:
+                st.write("**Aturan Minum:**")
+                st.write(dosage)
 
 def medical_history_page():
     """Halaman Riwayat Medis"""
     st.title("📋 Riwayat Medis")
     
-    # Get latest sensor data
-    latest_sensor_data = get_sensor_data()
+    # Ambil data konfigurasi dari session state
+    cfg = st.session_state.box_cfg
     
-    # Display sensor information if available
-    if latest_sensor_data:
-        with st.expander("Data Sensor Medibox", expanded=True):
-            col1, col2, col3 = st.columns(3)
+    # Tampilkan data konfigurasi sebagai pengganti data sensor
+    if cfg:
+        with st.expander("📦 Informasi Konfigurasi Medibox", expanded=True):
+            col1, col2 = st.columns(2)
             with col1:
-                st.metric("Suhu", f"{latest_sensor_data.get('temperature', 'N/A')} °C")
+                st.markdown(f"**Penyakit/Kondisi:** {cfg.get('nama_penyakit', 'Belum diatur')}")
+                st.markdown(f"**Nama Obat:** {cfg.get('medication_name', 'Belum diatur')}")
+                st.markdown(f"**Jumlah Obat:** {cfg.get('Jumlah_obat', 0)}")
+                st.markdown(f"**Usia:** {cfg.get('usia', 'Belum diatur')} tahun")
+                st.markdown(f"**Jenis Kelamin:** {cfg.get('jenis_kelamin', 'Belum diatur')}")
+                st.markdown(f"**Riwayat Alergi:** {cfg.get('riwayat_alergi', 'Belum diatur')}")
             with col2:
-                st.metric("Kelembaban", f"{latest_sensor_data.get('humidity', 'N/A')}%")
-            with col3:
-                st.metric("Intensitas Cahaya", latest_sensor_data.get('ldr_value', 'N/A'))
-    
+                st.markdown("**Aturan Minum:**")
+                st.markdown(f"{cfg.get('dosage_rules', 'Belum diatur')}")   
     with st.form("medical_form"):
         st.write("Mohon isi informasi berikut!")
         history = st.text_area(
@@ -460,8 +537,8 @@ def medical_history_page():
         
         if st.form_submit_button("Lanjutkan"):
             if history.strip():
-                # Pass sensor data to question generator
-                questions = generate_medical_questions(history, latest_sensor_data)
+                # Pass configuration data to question generator instead of sensor data
+                questions = generate_medical_questions(history)
                 if questions:
                     st.session_state.generated_questions = questions
                     st.session_state.page = 'questioning'
@@ -512,8 +589,11 @@ def results_page():
     st.title("📝 Hasil Analisis")
     with st.spinner("🔄 Membuat analisis khusus untuk Anda..."):
         rec = generate_recommendations()
+        diet_plan = generate_diet_plan(st.session_state.medical_history)
+    
     st.subheader("📊 Ringkasan Jawaban")
     st.write(f"Total gejala yang dialami: {sum(st.session_state.answers)} dari {len(st.session_state.answers)}")
+    
     st.subheader("💡 Rekomendasi Medis")
     if rec:
         st.markdown(rec)
@@ -525,28 +605,148 @@ def results_page():
             "- Istirahat yang cukup\n" +
             "- Hindari aktivitas berat"
         )
+        
+    # Add diet plan section
+    st.subheader("🍏 Rekomendasi Pola Makan")
+    st.markdown(diet_plan)
+    
     st.divider()
     if st.button("🔄 Mulai Pemeriksaan Baru"):
         st.session_state.page = 'main'
-        st.rerun()  # Add rerun here
+        st.rerun()
+
+def sensor_history_page():
+    """Page dedicated to viewing sensor history data"""
+    st.title("📚 Riwayat Perubahan Sensor")
+    
+    # Only load sensor history when this page is accessed
+    with st.spinner("Memuat data sensor..."):
+        if st.button("🔃 Refresh Riwayat Sensor"):
+            st.session_state.sensor_history = get_sensor_history()
+            st.success("✅ Data berhasil diperbarui!")
+        
+        # Load sensor history if not already loaded
+        if st.session_state.sensor_history is None:
+            st.session_state.sensor_history = get_sensor_history()
+    
+    # Display the data
+    df = st.session_state.sensor_history
+    if df is not None and not df.empty:
+        # Get last_updated timestamp from box configuration
+        last_updated = None
+        if st.session_state.box_cfg and 'last_updated' in st.session_state.box_cfg:
+            last_updated_raw = st.session_state.box_cfg['last_updated']
+            if isinstance(last_updated_raw, datetime):
+                last_updated = last_updated_raw
+            else:
+                try:
+                    last_updated = datetime.fromisoformat(str(last_updated_raw))
+                except:
+                    last_updated = None
+        
+        # Filter data to show only records after last_updated
+        if last_updated and 'timestamp' in df.columns:
+            # Convert last_updated to pandas timestamp with timezone adjustment
+            adjusted_last_updated = last_updated + timedelta(hours=7)
+            # Filter dataframe
+            filtered_df = df[df['timestamp'] > adjusted_last_updated]
+            
+            # Show information about filtering
+            st.info(f"📅 Menampilkan data setelah konfigurasi terakhir: {adjusted_last_updated.strftime('%d %b %Y, %H:%M')}")
+            
+            # If no data after last_updated
+            if filtered_df.empty:
+                st.warning("Tidak ada data sensor baru sejak konfigurasi terakhir.")
+                # Add option to show all data
+                if st.button("Tampilkan Semua Data"):
+                    filtered_df = df
+            else:
+                # Remove specific tracking columns
+                if 'obat_diambil' in filtered_df.columns:
+                    display_df = filtered_df.drop(columns=['obat_diambil'])
+                else:
+                    display_df = filtered_df
+                
+                # Show medication stats
+                if 'sisa_obat' in filtered_df.columns:
+                    latest_row = filtered_df.iloc[-1]
+                    obat_diambil = latest_row.get('obat_diambil', 0)
+                    sisa_obat = latest_row.get('sisa_obat', 0)
+                    
+                    st.info(f"**Informasi Obat:** {obat_diambil} obat telah diambil, sisa {sisa_obat} obat.")
+                
+                st.dataframe(display_df.sort_values(by="timestamp", ascending=False), use_container_width=True)
+        else:
+            # If last_updated is not available, display all data
+            if 'obat_diambil' in df.columns:
+                display_df = df.drop(columns=['obat_diambil'])
+            else:
+                display_df = df
+            
+            # Show medication stats
+            if 'sisa_obat' in df.columns:
+                latest_row = df.iloc[-1]
+                obat_diambil = latest_row.get('obat_diambil', 0)
+                sisa_obat = latest_row.get('sisa_obat', 0)
+                
+                st.info(f"**Informasi Obat:** {obat_diambil} obat telah diambil, sisa {sisa_obat} obat.")
+            
+            st.dataframe(display_df.sort_values(by="timestamp", ascending=False), use_container_width=True)
+    else:
+        st.info("Tidak ada data sensor yang tersedia.")
+        
+
+# ===========================
+# SIDEBAR NAVIGATION
+# ===========================
+# Only show sidebar when not on login/config pages
+if st.session_state.page not in ['login', 'config', 'confirm_config']:
+    st.sidebar.title("🔀 Menu")
+    if st.session_state.box_id:  # Only show navigation when logged in
+        st.sidebar.write(f"**Kotak ID:** {st.session_state.box_id}")
+        menu = st.sidebar.radio("Pilih Halaman:", ["🩺 Pemeriksaan Kesehatan", "📚 Riwayat Sensor"])
+    else:
+        # Jika belum login, tombol menu tidak aktif
+        st.sidebar.info("Silakan login terlebih dahulu")
+        menu = "🩺 Pemeriksaan Kesehatan"  # Default menu
+else:
+    # For pages where sidebar is hidden, we still need to set a default menu value
+    # to avoid errors in the routing section
+    menu = "🩺 Pemeriksaan Kesehatan"  # Default menu value
 
 # ===========================
 # ROUTING
 # ===========================
+# Determine if we should show login or content pages
 if st.session_state.page == 'login':
     login_page()
 elif st.session_state.page == 'confirm_config':
     confirm_config_page()
 elif st.session_state.page == 'config':
     config_page()
-elif st.session_state.page == 'main':
-    main_page()
-elif st.session_state.page == 'medical_history':
-    medical_history_page()
-elif st.session_state.page == 'questioning':
-    questioning_page()
-elif st.session_state.page == 'results':
-    results_page()
+else:
+    # Navigation based on sidebar selection when logged in
+    if st.session_state.box_id:
+        # Display main title after login
+        st.title(f"📊 MediBox")
+        
+        # Route to appropriate content based on sidebar selection
+        if menu == "🩺 Pemeriksaan Kesehatan":
+            if st.session_state.page == 'main':
+                main_page()
+            elif st.session_state.page == 'medical_history':
+                medical_history_page()
+            elif st.session_state.page == 'questioning':
+                questioning_page()
+            elif st.session_state.page == 'results':
+                results_page()
+        elif menu == "📚 Riwayat Sensor":
+            # Only load sensor history when this option is selected
+            sensor_history_page()
+    else:
+        # If not logged in but not on login page, redirect to login
+        st.session_state.page = 'login'
+        st.rerun()
 
 # ===========================
 # FOOTER
