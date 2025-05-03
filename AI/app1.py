@@ -21,12 +21,7 @@ client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
 db = client["SentinelSIC"]
 collection = db["SensorSentinel"]
 boxcfg_coll = db["IdUserBox"]  # Koleksi konfigurasi kotak
-hide_menu_style = """
-    <style>
-    #MainMenu {visibility: hidden;}
-    </style>
-"""
-st.markdown(hide_menu_style, unsafe_allow_html=True)
+
 
 # Fungsi untuk mendapatkan timestamp lokal
 def get_local_timestamp():
