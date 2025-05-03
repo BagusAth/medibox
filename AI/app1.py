@@ -657,9 +657,6 @@ def sensor_history_page():
             # If no data after last_updated
             if filtered_df.empty:
                 st.warning("Tidak ada data sensor baru sejak konfigurasi terakhir.")
-                # Add option to show all data
-                if st.button("Tampilkan Semua Data"):
-                    filtered_df = df
             else:
                 # Remove specific tracking columns
                 if 'obat_diambil' in filtered_df.columns:
