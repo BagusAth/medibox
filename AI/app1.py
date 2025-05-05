@@ -365,7 +365,7 @@ def display_header_with_logo():
     with col1:
         # Try to load the image file
         try:
-            st.image("Medibox.png", width=100)  # Reduced from 1000 to 100
+            st.image("image/Medibox.png", width=100)  # Reduced from 1000 to 100
         except:
             # If image loading fails, show a placeholder or emoji
             st.markdown("📊")
