@@ -5,6 +5,7 @@ from bson.json_util import dumps
 import certifi
 import pandas as pd
 from datetime import datetime, timedelta
+from PIL import Image
 import pytz
 
 # ===========================
@@ -361,11 +362,11 @@ def generate_recommendations():
 def display_header_with_logo():
     """Display MediBox header with logo image"""
     col1, col2 = st.columns([1, 5])
-    
+    image = Image.open("image/Medibox.png")
     with col1:
         # Try to load the image file
         try:
-            st.image("image/Medibox.png", width=100)  # Reduced from 1000 to 100
+            st.image(image, width=100)  # Reduced from 1000 to 100
         except:
             # If image loading fails, show a placeholder or emoji
             st.markdown("📊")
