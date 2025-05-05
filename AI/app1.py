@@ -21,7 +21,7 @@ client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
 db = client["SentinelSIC"]
 collection = db["SensorSentinel"]
 boxcfg_coll = db["IdUserBox"]  # Koleksi konfigurasi kotak
-
+reminder_collection = db["MedicineReminders"]
 
 # Fungsi untuk mendapatkan timestamp lokal
 def get_local_timestamp():
@@ -42,7 +42,8 @@ session_defaults = {
     'current_question': 0,
     'sensor_history': None,
     'reset_obat_count': False,
-    'show_healthy_message': False
+    'show_healthy_message': False,
+    'medication_schedule': None  # Add this line for storing active schedule
 }
 
 for key, val in session_defaults.items():
@@ -82,17 +83,16 @@ def get_sensor_history(limit=2000):
 
         filtered_changes = []
         last = {}
-        obat_count = 0  # Inisialisasi counter untuk jumlah obat
-        previous_ldr = None  # Nilai ldr sebelumnya
-        last_timestamp = None  # Track the last time we added a record
         medications_taken = 0  # Jumlah obat yang telah diambil
+        previous_ldr = None
+        last_timestamp = None
         
         # Ambil informasi last_updated dan jumlah obat dari konfigurasi box
         box_config = None
         if st.session_state.box_id and st.session_state.box_cfg:
             box_config = st.session_state.box_cfg
             last_updated = box_config.get('last_updated')
-            current_med_count = box_config.get('Jumlah_obat', 0)
+            initial_med_count = box_config.get('Jumlah_obat', 0)  # Renamed to initial_med_count
             
             # Convert last_updated ke format datetime jika ada
             if last_updated:
@@ -107,7 +107,7 @@ def get_sensor_history(limit=2000):
                 config_last_updated = None
         else:
             config_last_updated = None
-            current_med_count = 0
+            initial_med_count = 0
         
         # Reset counter jika diminta
         if st.session_state.reset_obat_count:
@@ -149,23 +149,10 @@ def get_sensor_history(limit=2000):
                     config_last_updated and current_timestamp and 
                     current_timestamp > config_last_updated):
                     medications_taken += 1
-                    # Update jumlah obat di database jika perlu
-                    if current_med_count > medications_taken:
-                        new_count = current_med_count - medications_taken
-                        # Hanya update jika telah login dan ada ID kotak
-                        if st.session_state.box_id:
-                            try:
-                                boxcfg_coll.update_one(
-                                    {"box_id": st.session_state.box_id},
-                                    {"$set": {"Jumlah_obat": new_count}}
-                                )
-                                # Update juga di session state
-                                if st.session_state.box_cfg:
-                                    st.session_state.box_cfg["Jumlah_obat"] = new_count
-                            except Exception as e:
-                                st.error(f"Gagal memperbarui jumlah obat: {str(e)}")
+                    # REMOVED: Update to database for Jumlah_obat
+                    # Only update the tracking variable, not the database
             # Atau jika sudah lebih dari 1 jam sejak update terakhir
-            elif current_timestamp and last_timestamp and (current_timestamp - last_timestamp).total_seconds() >= 3600:  # 3600 seconds = 1 hour
+            elif current_timestamp and last_timestamp and (current_timestamp - last_timestamp).total_seconds() >= 3600:
                 add_record = True
             
             previous_ldr = current_ldr
@@ -177,15 +164,15 @@ def get_sensor_history(limit=2000):
             else:
                 changes['timestamp'] = None
 
-            # Hitung sisa obat yang sebenarnya
-            remaining_meds = max(0, current_med_count - medications_taken)
-            changes['sisa_obat'] = remaining_meds
-            changes['obat_diambil'] = medications_taken
+            # Track medication stats with proper variable names
+            changes['jumlah_obat_awal'] = initial_med_count  # Original medication count
+            changes['jumlah_obat_diminum'] = medications_taken  # Pills consumed 
+            changes['jumlah_obat_saat_ini'] = max(0, initial_med_count - medications_taken)  # Current pills
             
             # Hanya tambahkan record jika perlu
             if add_record:
                 filtered_changes.append(changes)
-                last_timestamp = current_timestamp  # Update the last timestamp we added
+                last_timestamp = current_timestamp
 
         return pd.DataFrame(filtered_changes)
     except Exception as e:
@@ -204,6 +191,76 @@ def insert_sensor_data(temperature, humidity, ldr_value):
         collection.insert_one(sensor_data)
     except Exception as e:
         st.error(f"Gagal menyimpan data sensor: {str(e)}")
+
+def reminder_page():
+    """Page for viewing and managing medication reminders"""
+    st.title("⏰ Pengingat Obat")
+    
+    # Initialize reminder collection
+    if "reminder_collection" not in globals():
+        global reminder_collection
+        reminder_collection = db["MedicineReminders"]
+    
+    # Fetch the active schedule for this box
+    schedule = reminder_collection.find_one({"box_id": st.session_state.box_id, "is_active": True})
+    if not schedule:
+        # If no active schedule found, try to find any schedule for this box
+        schedule = reminder_collection.find_one({"box_id": st.session_state.box_id})
+    
+    if schedule:
+        # Display schedule details
+        st.success("✅ Jadwal pengingat tersedia")
+        
+        with st.expander("ℹ️ Penjelasan", expanded=True):
+            if "explanation" in schedule:
+                st.write(schedule["explanation"])
+            else:
+                st.write("Tidak ada penjelasan tersedia untuk jadwal ini.")
+        
+        # Medicine times
+        st.subheader("⏰ Jadwal Minum Obat")
+        for entry in schedule.get("medicine_times", []):
+            st.info(f"**{entry['time']}** - {entry['message']}")
+        
+        # Meal times
+        st.subheader("🍽️ Jadwal Makan")
+        for entry in schedule.get("meal_times", []):
+            st.success(f"**{entry['time']}** - {entry['message']}")
+        
+        # Update last accessed time
+        try:
+            reminder_collection.update_one(
+                {"_id": schedule["_id"]},
+                {"$set": {"last_accessed": datetime.now(pytz.timezone("Asia/Jakarta"))}}
+            )
+        except Exception:
+            pass
+            
+        # Regenerate option
+        if st.button("🔄 Perbarui Jadwal"):
+            with st.spinner("Memperbarui jadwal..."):
+                new_schedule = generate_and_save_medicine_schedule(
+                    st.session_state.medical_history or schedule.get("medical_history", ""),
+                    st.session_state.box_cfg
+                )
+                if new_schedule:
+                    st.session_state.medication_schedule = new_schedule
+                    st.success("✅ Jadwal berhasil diperbarui!")
+                    st.rerun()
+    else:
+        st.warning("⚠️ Belum ada jadwal pengingat obat")
+        
+        # Create schedule option
+        if st.button("➕ Buat Jadwal Baru"):
+            with st.spinner("Membuat jadwal pengingat..."):
+                new_schedule = generate_and_save_medicine_schedule(
+                    st.session_state.medical_history or f"Pasien dengan {st.session_state.box_cfg.get('nama_penyakit', '')}",
+                    st.session_state.box_cfg
+                )
+                if new_schedule:
+                    st.session_state.medication_schedule = new_schedule
+                    st.success("✅ Jadwal berhasil dibuat!")
+                    st.rerun()
 
 def generate_medical_questions(history, sensor_data=None):
     """Generate medical questions based on history and sensor data"""
@@ -253,6 +310,7 @@ def generate_recommendations():
         # Format configuration information
         config_info = f"""
         4. Informasi Kotak Medibox:
+           - Nama Pengguna: {cfg.get('nama', 'Tidak diatur')}
            - Penyakit/Kondisi: {cfg.get('nama_penyakit', 'Tidak diatur')}
            - Nama Obat: {cfg.get('medication_name', 'Tidak diatur')}
            - Jumlah Obat: {cfg.get('Jumlah_obat', 0)}
@@ -262,6 +320,11 @@ def generate_recommendations():
            - Aturan Penyimpanan: {cfg.get('storage_rules', 'Tidak diatur')}
            - Aturan Minum: {cfg.get('dosage_rules', 'Tidak diatur')}
         """
+        
+        # Add pharmacist notes if available
+        catatan_apoteker = cfg.get('catatan_apoteker', '')
+        if catatan_apoteker and catatan_apoteker.strip():
+            config_info += f"           - Catatan Apoteker: {catatan_apoteker}"
         
         history = st.session_state.medical_history or "Tidak ada riwayat"
         symptoms = "\n".join([
@@ -295,10 +358,29 @@ def generate_recommendations():
         st.error(f"Error generating recommendations: {str(e)}")
         return None
 
+def display_header_with_logo():
+    """Display MediBox header with logo image"""
+    col1, col2 = st.columns([1, 5])
+    
+    with col1:
+        # Try to load the image file
+        try:
+            st.image("Medibox.png", width=100)  # Reduced from 1000 to 100
+        except:
+            # If image loading fails, show a placeholder or emoji
+            st.markdown("📊")
+            
+    with col2:
+        # Use markdown with HTML for better alignment - added negative margin-left
+        st.markdown("""
+            <h1 style="margin-top: 5px; margin-left: -40px; padding-top: 0;">MediBox</h1>
+            """, unsafe_allow_html=True)
+        
 def generate_diet_plan(history):
     """Generate diet recommendations based on medical history"""
     # Get configuration data for age and gender
     cfg = st.session_state.box_cfg or {}
+    nama = cfg.get('nama', '')
     usia = cfg.get('usia')
     jenis_kelamin = cfg.get('jenis_kelamin')
     riwayat_alergi = cfg.get('riwayat_alergi', 'Tidak ada')
@@ -307,6 +389,7 @@ def generate_diet_plan(history):
     Anda adalah ahli gizi profesional. Berdasarkan riwayat penyakit/kondisi medis berikut,
     rekomendasikan pola makan harian dengan daftar makanan dan kandungan nutrisinya.
 
+    Nama Pasien: {nama}
     Riwayat Pasien: {history}
     Usia Pasien: {usia} tahun
     Jenis Kelamin Pasien: {jenis_kelamin}
@@ -352,7 +435,8 @@ def confirm_config_page():
     # Display current box configuration
     cfg = st.session_state.box_cfg
     
-    # Check if all required fields are configured (except riwayat_alergi)
+    # Check if all required fields are configured (except riwayat_alergi and catatan_apoteker)
+    nama = cfg.get('nama', '')
     nama_penyakit = cfg.get('nama_penyakit', '')
     medication_name = cfg.get('medication_name', '')
     usia = cfg.get('usia', None)
@@ -361,9 +445,10 @@ def confirm_config_page():
     dosage_rules = cfg.get('dosage_rules', '')
     jumlah_obat = cfg.get('Jumlah_obat', None)
     
-    # Check each field is properly set
+    # Check each field is properly set (catatan_apoteker can be empty)
     is_condition_set = (
-        nama_penyakit and nama_penyakit.strip() != '' and nama_penyakit.lower() != 'belum diatur'
+        nama and nama.strip() != '' and nama.lower() != 'belum diatur'
+        and nama_penyakit and nama_penyakit.strip() != '' and nama_penyakit.lower() != 'belum diatur'
         and medication_name and medication_name.strip() != '' and medication_name.lower() != 'belum diatur'
         and usia is not None
         and jenis_kelamin and jenis_kelamin.strip() != '' and jenis_kelamin.lower() != 'belum diatur'
@@ -375,6 +460,7 @@ def confirm_config_page():
     col1, col2 = st.columns(2)
     with col1:
         st.info("**Informasi Saat Ini:**")
+        st.write(f"**Nama Pengguna:** {cfg.get('nama', 'Belum diatur')}")
         st.write(f"**Penyakit/Kondisi:** {cfg.get('nama_penyakit', 'Belum diatur')}")
         st.write(f"**Nama Obat:** {cfg.get('medication_name', 'Belum diatur')}")
         st.write(f"**Jumlah Obat:** {cfg.get('Jumlah_obat', 0)}")
@@ -382,6 +468,13 @@ def confirm_config_page():
         st.write(f"**Jenis Kelamin:** {cfg.get('jenis_kelamin', 'Belum diatur')}")
         st.write(f"**Riwayat Alergi:** {cfg.get('riwayat_alergi', 'Belum diatur')}")
         
+        # Display pharmacist notes if available
+        catatan_apoteker = cfg.get('catatan_apoteker', '')
+        if catatan_apoteker and catatan_apoteker.strip():
+            st.write(f"**Catatan Apoteker:** {catatan_apoteker}")
+        else:
+            st.write("**Catatan Apoteker:** Tidak ada")
+            
         # Format last updated time if available
         last_updated = cfg.get('last_updated', None)
         if last_updated:
@@ -418,6 +511,9 @@ def config_page():
     st.title(f"⚙️ Informasi Kotak Obat")
     cfg = st.session_state.box_cfg or {}
     with st.form("cfg_form"):
+        nama = st.text_input("Nama Pengguna", 
+                           value=cfg.get("nama", ""),
+                           help="Nama lengkap pengguna kotak obat")
         nama_penyakit = st.text_input("Nama Penyakit/Kondisi", 
                                      value=cfg.get("nama_penyakit", ""),
                                      help="Kondisi medis yang sedang ditangani")
@@ -449,6 +545,12 @@ def config_page():
         storage = st.text_area("Aturan Penyimpanan", value=cfg.get("storage_rules", ""), height=80)
         dosage = st.text_area("Aturan Minum", value=cfg.get("dosage_rules", ""), height=80)
         
+        # Add catatan apoteker field
+        catatan_apoteker = st.text_area("Catatan Apoteker", 
+                                       value=cfg.get("catatan_apoteker", ""),
+                                       help="Catatan khusus dari apoteker (opsional)",
+                                       height=100)
+        
         # Field for Jumlah_obat
         Jumlah_obat = st.number_input("Jumlah Obat", 
                                     min_value=0, 
@@ -458,23 +560,50 @@ def config_page():
         submitted = st.form_submit_button("Simpan Informasi")
         if submitted:
             now = datetime.now(pytz.timezone("Asia/Jakarta"))
+            
+            # Create updated configuration document
+            updated_cfg = {
+                "nama": nama,
+                "nama_penyakit": nama_penyakit,
+                "medication_name": med_name,
+                "storage_rules": storage,
+                "dosage_rules": dosage,
+                "Jumlah_obat": int(Jumlah_obat),
+                "usia": int(usia),
+                "jenis_kelamin": jenis_kelamin,
+                "riwayat_alergi": riwayat_alergi,
+                "catatan_apoteker": catatan_apoteker,  # Add pharmacist notes
+                "last_updated": now
+            }
+            
+            # Update database
             boxcfg_coll.update_one(
                 {"box_id": st.session_state.box_id},
-                {"$set": {
-                    "nama_penyakit": nama_penyakit,
-                    "medication_name": med_name,
-                    "storage_rules": storage,
-                    "dosage_rules": dosage,
-                    "Jumlah_obat": int(Jumlah_obat),
-                    "usia": int(usia),  # Save age
-                    "jenis_kelamin": jenis_kelamin,  # Save gender
-                    "riwayat_alergi": riwayat_alergi,  # Save allergy history
-                    "last_updated": now
-                }},
+                {"$set": updated_cfg},
                 upsert=True
             )
-            st.success("✅ Informasi disimpan")
-            # langsung lanjut ke halaman utama
+            
+            # Update session state with new config
+            st.session_state.box_cfg = {**st.session_state.box_cfg, **updated_cfg}
+            
+            # Generate medication schedule automatically
+            with st.spinner("Membuat jadwal pengingat obat..."):
+                # Get existing medical history if available
+                medical_history = st.session_state.medical_history or f"Pasien dengan {nama_penyakit}" 
+                
+                # Generate and save medication schedule
+                schedule = generate_and_save_medicine_schedule_from_config(
+                    medical_history=medical_history,
+                    box_cfg=st.session_state.box_cfg
+                )
+                
+                if schedule:
+                    st.session_state.medication_schedule = schedule
+                    st.success("✅ Informasi dan jadwal pengingat berhasil dibuat dan disimpan!")
+                else:
+                    st.success("✅ Informasi disimpan, tetapi jadwal pengingat gagal dibuat.")
+            
+            # Navigate to main page
             st.session_state.page = 'main'
             st.rerun()
 
@@ -482,27 +611,45 @@ def config_page():
 # HALAMAN APLIKASI
 # ===========================
 def main_page():
-    st.title("🩺 Aplikasi Pemeriksaan Kesehatan")
-    
-    
-    # Display medicine info from box config
+    # Create personalized greeting based on gender and name
     cfg = st.session_state.box_cfg
     if cfg:
+        nama = cfg.get('nama', '')
+        jenis_kelamin = cfg.get('jenis_kelamin', '')
+        
+        if nama:
+            # Use Nyonya for women, Tuan for men
+            title_prefix = "Nyonya" if jenis_kelamin == "Perempuan" else "Tuan"
+            st.header(f"👋 Selamat Datang, {title_prefix} {nama}!")
+    
+    st.title("🩺 Aplikasi Pemeriksaan Kesehatan")
+    
+    # Display medicine info from box config
+    if cfg:
         with st.expander("💊 Informasi Obat", expanded=True):
-            st.write(f"**Penyakit/Kondisi   :** {cfg.get('nama_penyakit', 'Belum diatur')}")
-            st.write(f"**Nama Obat          :** {cfg.get('medication_name', 'Belum diatur')}")
-            st.write(f"**Jumlah Obat        :** {cfg.get('Jumlah_obat', 0)}")
-            st.write(f"**Usia               :** {cfg.get('usia', 'Belum diatur')} tahun")
-            st.write(f"**Jenis Kelamin      :** {cfg.get('jenis_kelamin', 'Belum diatur')}")
-            st.write(f"**Riwayat Alergi     :** {cfg.get('riwayat_alergi', 'Belum diatur')}")
+            st.write(f"**Nama Pengguna       :** {cfg.get('nama', 'Belum diatur')}")
+            st.write(f"**Penyakit/Kondisi    :** {cfg.get('nama_penyakit', 'Belum diatur')}")
+            st.write(f"**Nama Obat           :** {cfg.get('medication_name', 'Belum diatur')}")
+            st.write(f"**Jumlah Obat         :** {cfg.get('Jumlah_obat', 0)}")
+            st.write(f"**Usia                :** {cfg.get('usia', 'Belum diatur')} tahun")
+            st.write(f"**Jenis Kelamin       :** {cfg.get('jenis_kelamin', 'Belum diatur')}")
+            st.write(f"**Riwayat Alergi      :** {cfg.get('riwayat_alergi', 'Belum diatur')}")
+            catatan_apoteker = cfg.get('catatan_apoteker', '')
+            if catatan_apoteker and catatan_apoteker.strip():
+                st.write(f"**Catatan Apoteker:** {catatan_apoteker}")
+            else:
+                st.write("**Catatan Apoteker:** Tidak ada")
             
+
             dosage = cfg.get('dosage_rules', '')
             if dosage:
                 st.write(f"**Aturan Minum        :** {dosage}")
     if st.button("Ganti Informasi Pengguna", key="change_box"): 
-        for k in ['box_id','box_cfg','sensor_history']:
-            st.session_state.pop(k, None)
-        st.session_state.page = 'login'
+        # Keep the box_id, just navigate to config page
+        st.session_state.page = 'config'
+        # Clear sensor_history to refresh it later if needed
+        if 'sensor_history' in st.session_state:
+            st.session_state.pop('sensor_history', None)
         st.rerun()
     st.header("Apakah kamu merasa sakit hari ini?")
     c1, c2 = st.columns(2)
@@ -533,12 +680,14 @@ def medical_history_page():
         with st.expander("📦 Informasi Kotak Medibox", expanded=True):
             col1, col2 = st.columns(2)
             with col1:
+                st.markdown(f"**Nama Pengguna:** {cfg.get('nama', 'Belum diatur')}")
                 st.markdown(f"**Penyakit/Kondisi:** {cfg.get('nama_penyakit', 'Belum diatur')}")
                 st.markdown(f"**Nama Obat:** {cfg.get('medication_name', 'Belum diatur')}")
                 st.markdown(f"**Jumlah Obat:** {cfg.get('Jumlah_obat', 0)}")
                 st.markdown(f"**Usia:** {cfg.get('usia', 'Belum diatur')} tahun")
                 st.markdown(f"**Jenis Kelamin:** {cfg.get('jenis_kelamin', 'Belum diatur')}")
                 st.markdown(f"**Riwayat Alergi:** {cfg.get('riwayat_alergi', 'Belum diatur')}")
+
             with col2:
                 st.markdown("**Aturan Minum:**")
                 st.markdown(f"{cfg.get('dosage_rules', 'Belum diatur')}")   
@@ -602,34 +751,66 @@ def questioning_page():
 
 def results_page():
     st.title("📝 Hasil Analisis")
-    with st.spinner("🔄 Membuat analisis khusus untuk Anda..."):
+    
+    # Get user's gender from configuration
+    cfg = st.session_state.box_cfg or {}
+    jenis_kelamin = cfg.get('jenis_kelamin', '')
+    
+    # Set appropriate title based on gender
+    title_prefix = "Nyonya" if jenis_kelamin == "Perempuan" else "Tuan"
+    
+    # Use personalized spinner message
+    with st.spinner(f"🔄 Mohon tunggu sebentar {title_prefix}..."):
         rec = generate_recommendations()
         diet_plan = generate_diet_plan(st.session_state.medical_history)
-    
-    st.subheader("📊 Ringkasan Jawaban")
-    st.write(f"Total gejala yang dialami: {sum(st.session_state.answers)} dari {len(st.session_state.answers)}")
-    
-    st.subheader("💡 Rekomendasi Medis")
-    if rec:
-        st.markdown(rec)
-    else:
-        st.warning(
-            "**Rekomendasi Umum:**\n" +
-            "- Konsultasikan ke dokter umum terdekat\n" +
-            "- Pantau perkembangan gejala\n" +
-            "- Istirahat yang cukup\n" +
-            "- Hindari aktivitas berat"
+        
+        # Generate medication schedule
+        medication_schedule = generate_and_save_medicine_schedule(
+            st.session_state.medical_history,
+            st.session_state.box_cfg
         )
         
-    # Add diet plan section
-    st.subheader("🍏 Rekomendasi Pola Makan")
-    st.markdown(diet_plan)
+        # Store in session state for other pages
+        if medication_schedule:
+            st.session_state.medication_schedule = medication_schedule
+
+    # Display medical recommendations
+    if rec:
+        st.subheader("📋 Rekomendasi Medis")
+        st.markdown(rec)
     
-    st.divider()
-    if st.button("🔄 Mulai Pemeriksaan Baru"):
+    # Display diet recommendations
+    if diet_plan:
+        st.subheader("🍎 Rekomendasi Pola Makan")
+        st.markdown(diet_plan)
+    
+    # Display medication schedule
+    if medication_schedule:
+        st.subheader("⏰ Jadwal Pengingat Obat")
+        st.success("✅ Jadwal pengingat obat telah dibuat berdasarkan kondisi Anda")
+        
+        # Show schedule in an expandable section
+        with st.expander("Lihat Jadwal", expanded=True):
+            # Medicine times
+            st.write("**Waktu Minum Obat:**")
+            for time_entry in medication_schedule.get("medicine_times", []):
+                st.info(f"• **{time_entry['time']}** - {time_entry['message']}")
+            
+            # Meal times
+            st.write("**Waktu Makan:**")
+            for time_entry in medication_schedule.get("meal_times", []):
+                st.success(f"• **{time_entry['time']}** - {time_entry['message']}")
+        
+        # Button to go to reminders page
+        if st.button("⏰ Kelola Jadwal Pengingat"):
+            st.session_state.page = 'reminders'
+            st.rerun()
+    
+    # Button to return to main page
+    if st.button("🏠 Kembali ke Halaman Utama"):
         st.session_state.page = 'main'
         st.rerun()
-
+        
 def sensor_history_page():
     """Page dedicated to viewing sensor history data"""
     st.title("📚 Riwayat Perubahan Sensor")
@@ -673,40 +854,317 @@ def sensor_history_page():
             if filtered_df.empty:
                 st.warning("Tidak ada data sensor baru sejak perubahan terakhir.")
             else:
-                # Remove specific tracking columns
-                if 'obat_diambil' in filtered_df.columns:
-                    display_df = filtered_df.drop(columns=['obat_diambil'])
-                else:
-                    display_df = filtered_df
-                
-                # Show medication stats
-                if 'sisa_obat' in filtered_df.columns:
+                # Show medication stats with the new variables
+                if 'jumlah_obat_saat_ini' in filtered_df.columns:
                     latest_row = filtered_df.iloc[-1]
-                    obat_diambil = latest_row.get('obat_diambil', 0)
-                    sisa_obat = latest_row.get('sisa_obat', 0)
+                    jumlah_awal = latest_row.get('jumlah_obat_awal', 0)
+                    obat_diminum = latest_row.get('jumlah_obat_diminum', 0)
+                    obat_saat_ini = latest_row.get('jumlah_obat_saat_ini', 0)
                     
-                    st.info(f"**Informasi Obat:** {obat_diambil} obat telah diambil, sisa {sisa_obat} obat.")
+                    # Display medication information
+                    st.info(f"""
+                    **Informasi Obat:**
+                    - Jumlah obat awal: {jumlah_awal}
+                    - Jumlah obat diminum: {obat_diminum}
+                    - Jumlah obat saat ini: {obat_saat_ini}
+                    """)
+                
+                # Prepare display dataframe - remove tracking columns
+                display_columns = [col for col in filtered_df.columns if col not in 
+                                  ['jumlah_obat_awal', 'jumlah_obat_diminum']]
+                
+                display_df = filtered_df[display_columns].copy()
+                # Rename column for display
+                if 'jumlah_obat_saat_ini' in display_df.columns:
+                    display_df = display_df.rename(columns={'jumlah_obat_saat_ini': 'sisa_obat'})
                 
                 st.dataframe(display_df.sort_values(by="timestamp", ascending=False), use_container_width=True)
         else:
             # If last_updated is not available, display all data
-            if 'obat_diambil' in df.columns:
-                display_df = df.drop(columns=['obat_diambil'])
-            else:
-                display_df = df
-            
-            # Show medication stats
-            if 'sisa_obat' in df.columns:
+            # Show medication stats with the new variables
+            if 'jumlah_obat_saat_ini' in df.columns:
                 latest_row = df.iloc[-1]
-                obat_diambil = latest_row.get('obat_diambil', 0)
-                sisa_obat = latest_row.get('sisa_obat', 0)
+                jumlah_awal = latest_row.get('jumlah_obat_awal', 0)
+                obat_diminum = latest_row.get('jumlah_obat_diminum', 0)
+                obat_saat_ini = latest_row.get('jumlah_obat_saat_ini', 0)
                 
-                st.info(f"**Informasi Obat:** {obat_diambil} obat telah diambil, sisa {sisa_obat} obat.")
+                # Display medication information
+                st.info(f"""
+                **Informasi Obat:**
+                - Jumlah obat awal: {jumlah_awal}
+                - Jumlah obat diminum: {obat_diminum}
+                - Jumlah obat saat ini: {obat_saat_ini}
+                """)
+            
+            # Prepare display dataframe - remove tracking columns
+            display_columns = [col for col in df.columns if col not in 
+                              ['jumlah_obat_awal', 'jumlah_obat_diminum']]
+            
+            display_df = df[display_columns].copy()
+            # Rename column for display
+            if 'jumlah_obat_saat_ini' in display_df.columns:
+                display_df = display_df.rename(columns={'jumlah_obat_saat_ini': 'sisa_obat'})
             
             st.dataframe(display_df.sort_values(by="timestamp", ascending=False), use_container_width=True)
     else:
         st.info("Tidak ada data sensor yang tersedia.")
+
+def generate_and_save_medicine_schedule(medical_history, box_cfg):
+    """Generate and save medicine schedule automatically"""
+    # Pastikan ada data yang cukup
+    if not box_cfg or not medical_history:
+        return None
+    
+    medication_name = box_cfg.get("medication_name", "")
+    dosage_rules = box_cfg.get("dosage_rules", "")
+    catatan_apoteker = box_cfg.get("catatan_apoteker", "")
+    box_id = st.session_state.box_id
+    
+    if not medication_name or not dosage_rules or not box_id:
+        return None
+    
+    # Buat koleksi baru jika belum ada
+    if "reminder_collection" not in globals():
+        global reminder_collection
+        reminder_collection = db["MedicineReminders"]
+    
+    try:
+        # Add pharmacist notes to prompt if available
+        pharmacist_notes = ""
+        if catatan_apoteker and catatan_apoteker.strip():
+            pharmacist_notes = f"\nCatatan dari Apoteker: {catatan_apoteker}"
         
+        # Gunakan AI untuk membuat jadwal
+        prompt = f"""
+        Sebagai ahli farmasi, analisis informasi berikut dan buat jadwal optimal:
+        
+        Riwayat medis: {medical_history}
+        Nama obat: {medication_name}
+        Aturan minum: {dosage_rules}{pharmacist_notes}
+        
+        Buat jadwal dalam format JSON dengan struktur berikut:
+        {{
+            "medicine_times": [
+                {{"time": "05.00", "message": "Minum {medication_name} setelah sarapan"}},
+                {{"time": "15:00", "message": "Minum {medication_name} setelah makan siang"}},
+                {{"time": "20:00", "message": "Minum {medication_name} setelah makan malam"}}
+            ],
+            "meal_times": [
+                {{"time": "04:30", "message": "Sarapan pagi"}},
+                {{"time": "14:00", "message": "Makan siang"}},
+                {{"time": "19:00", "message": "Makan malam"}}
+            ],
+            "explanation": "Penjelasan singkat tentang jadwal ini"
+        }}
+        
+        Waktu harus dalam format 24 jam. Jadwal harus sesuai dengan aturan dosis dan kondisi medis pasien.
+        Jika ada catatan khusus dari apoteker, prioritaskan informasi tersebut dalam pembuatan jadwal.
+        """
+        
+        response = model.generate_content(prompt)
+        
+        # Ekstrak JSON dari respons
+        import re
+        import json
+        
+        # Cari blok JSON dalam respons
+        try:
+            # Coba parse langsung jika responnya hanya JSON
+            schedule_data = json.loads(response.text)
+        except:
+            # Jika gagal, coba ekstrak blok JSON menggunakan regex
+            json_match = re.search(r'```json\s*(.*?)\s*```', response.text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+            else:
+                # Coba ambil semua yang ada di dalam kurung kurawal
+                json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                else:
+                    return None
+                    
+            try:
+                schedule_data = json.loads(json_str)
+            except:
+                return None
+        
+        # Tambahkan metadata
+        schedule_data["box_id"] = box_id
+        schedule_data["updated_at"] = datetime.now(pytz.timezone("Asia/Jakarta"))
+        schedule_data["is_active"] = True
+        schedule_data["medical_history"] = medical_history
+        
+        # Update existing schedule or create new one if it doesn't exist
+        result = reminder_collection.update_one(
+            {"box_id": box_id},
+            {"$set": schedule_data},
+            upsert=True
+        )
+        
+        # Log keberhasilan
+        if result.upserted_id:
+            print(f"✅ Jadwal baru dibuat dengan ID: {result.upserted_id}")
+        else:
+            print(f"✅ Jadwal diperbarui untuk Box ID: {box_id}")
+        
+        # Fetch the updated document to return
+        updated_schedule = reminder_collection.find_one({"box_id": box_id})
+        return updated_schedule
+    
+    except Exception as e:
+        print(f"❌ Error saat memperbarui jadwal: {str(e)}")
+        return None
+
+def generate_and_save_medicine_schedule_from_config(medical_history, box_cfg):
+    """Generate and save medicine schedule from configuration data"""
+    # Pastikan ada data yang cukup
+    if not box_cfg:
+        return None
+    
+    medication_name = box_cfg.get("medication_name", "")
+    dosage_rules = box_cfg.get("dosage_rules", "")
+    condition = box_cfg.get("nama_penyakit", "")
+    usia = box_cfg.get("usia", "")
+    jenis_kelamin = box_cfg.get("jenis_kelamin", "")
+    riwayat_alergi = box_cfg.get("riwayat_alergi", "")
+    catatan_apoteker = box_cfg.get("catatan_apoteker", "")
+    box_id = st.session_state.box_id
+    
+    if not medication_name or not dosage_rules or not box_id:
+        return None
+    
+    # Buat koleksi baru jika belum ada
+    if "reminder_collection" not in globals():
+        global reminder_collection
+        reminder_collection = db["MedicineReminders"]
+    
+    try:
+        # Add pharmacist notes to prompt if available
+        pharmacist_notes = ""
+        if catatan_apoteker and catatan_apoteker.strip():
+            pharmacist_notes = f"\nCatatan dari Apoteker: {catatan_apoteker}"
+        
+        # Gunakan AI untuk membuat jadwal
+        prompt = f"""
+        Sebagai ahli farmasi, buat jadwal pengingat obat berdasarkan informasi berikut:
+        
+        Nama obat: {medication_name}
+        Aturan minum: {dosage_rules}
+        Penyakit/Kondisi: {condition}
+        Usia: {usia} tahun
+        Jenis Kelamin: {jenis_kelamin}
+        Riwayat Alergi: {riwayat_alergi}{pharmacist_notes}
+        Informasi medis tambahan: {medical_history}
+        
+        Buat jadwal dalam format JSON dengan struktur berikut:
+        {{
+            "medicine_times": [
+                {{"time": "08:00", "message": "Minum {medication_name} setelah sarapan"}},
+                {{"time": "14:00", "message": "Minum {medication_name} setelah makan siang"}},
+                {{"time": "20:00", "message": "Minum {medication_name} setelah makan malam"}}
+            ],
+            "meal_times": [
+                {{"time": "07:30", "message": "Sarapan pagi"}},
+                {{"time": "13:00", "message": "Makan siang"}},
+                {{"time": "19:00", "message": "Makan malam"}}
+            ],
+            "explanation": "Penjelasan tentang jadwal pengobatan ini dan bagaimana jadwal ini dibuat sesuai dengan kondisi pasien."
+        }}
+        
+        Jadwal harus mengikuti aturan dosis dan sesuai dengan kondisi medis pasien.
+        Jika ada catatan khusus dari apoteker, pertimbangkan dengan serius dalam membuat jadwal.
+        Berikan penjelasan yang informatif tentang jadwal dan hubungannya dengan kondisi kesehatan.
+        Hanya berikan output dalam format JSON tanpa kode atau penjelasan tambahan di luar JSON.
+        """
+        
+        response = model.generate_content(prompt)
+        
+        # Ekstrak JSON dari respons
+        import re
+        import json
+        
+        # Coba parse JSON dari respons
+        try:
+            # Coba parse langsung jika responnya hanya JSON
+            schedule_data = json.loads(response.text)
+        except:
+            # Jika gagal, coba ekstrak blok JSON menggunakan regex
+            json_match = re.search(r'```json\s*(.*?)\s*```', response.text, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+            else:
+                # Coba ambil semua yang ada di dalam kurung kurawal
+                json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                else:
+                    # Fallback jika semua metode ekstraksi gagal
+                    return create_fallback_schedule(medication_name)
+                    
+            try:
+                schedule_data = json.loads(json_str)
+            except:
+                # Fallback jika parsing JSON gagal
+                return create_fallback_schedule(medication_name)
+        
+        # Tambahkan metadata
+        schedule_data["box_id"] = box_id
+        schedule_data["updated_at"] = datetime.now(pytz.timezone("Asia/Jakarta"))
+        schedule_data["is_active"] = True
+        schedule_data["medical_history"] = medical_history
+        
+        # Update existing schedule or create new one if it doesn't exist
+        result = reminder_collection.update_one(
+            {"box_id": box_id},
+            {"$set": schedule_data},
+            upsert=True
+        )
+        
+        # Fetch the updated document to return
+        updated_schedule = reminder_collection.find_one({"box_id": box_id})
+        return updated_schedule
+    
+    except Exception as e:
+        print(f"❌ Error saat memperbarui jadwal: {str(e)}")
+        return create_fallback_schedule(medication_name)
+
+
+def create_fallback_schedule(medication_name):
+    """Create a simple fallback schedule if AI generation fails"""
+    box_id = st.session_state.box_id
+    
+    # Create fallback schedule data
+    fallback_data = {
+        "medicine_times": [
+            {"time": "08:00", "message": f"Minum {medication_name} setelah sarapan"},
+            {"time": "12:00", "message": f"Minum {medication_name} setelah makan siang"},
+            {"time": "20:00", "message": f"Minum {medication_name} setelah makan malam"}
+        ],
+        "meal_times": [
+            {"time": "07:30", "message": "Sarapan pagi"},
+            {"time": "11:30", "message": "Makan siang"},
+            {"time": "19:00", "message": "Makan malam"}
+        ],
+        "explanation": "Jadwal pengingat standar untuk tiga kali minum obat sehari setelah makan.",
+        "box_id": box_id,
+        "updated_at": datetime.now(pytz.timezone("Asia/Jakarta")),
+        "is_active": True,
+        "medical_history": ""
+    }
+    
+    # Update database with fallback schedule
+    if "reminder_collection" in globals():
+        try:
+            reminder_collection.update_one(
+                {"box_id": box_id},
+                {"$set": fallback_data},
+                upsert=True
+            )
+        except Exception as e:
+            print(f"❌ Error saat menyimpan jadwal fallback: {str(e)}")
+    
+    return fallback_data
 
 # ===========================
 # SIDEBAR NAVIGATION
@@ -715,7 +1173,8 @@ def sensor_history_page():
 if st.session_state.page not in ['login', 'config', 'confirm_config']:
     st.sidebar.title("🔀 Menu")
     if st.session_state.box_id:  # Only show navigation when logged in
-        menu = st.sidebar.radio("Pilih Halaman:", ["🩺 Pemeriksaan Kesehatan", "📚 Riwayat Sensor"])
+        menu = st.sidebar.radio("Pilih Halaman:", 
+                              ["🩺 Pemeriksaan Kesehatan", "⏰ Pengingat Obat", "📚 Riwayat Sensor"])
     else:
         # Jika belum login, tombol menu tidak aktif
         st.sidebar.info("Silakan login terlebih dahulu")
@@ -725,21 +1184,26 @@ else:
     # to avoid errors in the routing section
     menu = "🩺 Pemeriksaan Kesehatan"  # Default menu value
 
+
 # ===========================
 # ROUTING
 # ===========================
 # Determine if we should show login or content pages
 if st.session_state.page == 'login':
+    display_header_with_logo()
     login_page()
 elif st.session_state.page == 'confirm_config':
+    display_header_with_logo()
     confirm_config_page()
 elif st.session_state.page == 'config':
+    display_header_with_logo()
     config_page()
 else:
     # Navigation based on sidebar selection when logged in
     if st.session_state.box_id:
         # Display main title after login
-        st.title(f"📊 MediBox")
+        # Display header with logo
+        display_header_with_logo()
         
         # Route to appropriate content based on sidebar selection
         if menu == "🩺 Pemeriksaan Kesehatan":
@@ -751,8 +1215,11 @@ else:
                 questioning_page()
             elif st.session_state.page == 'results':
                 results_page()
+            elif st.session_state.page == 'reminders':  # New route for reminders from results
+                reminder_page()
+        elif menu == "⏰ Pengingat Obat":
+            reminder_page()
         elif menu == "📚 Riwayat Sensor":
-            # Only load sensor history when this option is selected
             sensor_history_page()
     else:
         # If not logged in but not on login page, redirect to login
@@ -764,3 +1231,4 @@ else:
 # ===========================
 st.divider()
 st.caption("⚠️ Aplikasi ini bukan pengganti diagnosis medis profesional.")
+
