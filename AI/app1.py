@@ -366,10 +366,6 @@ def display_header_with_logo():
         # Try to load the image file
         try:
             st.image(image/Medibox.png, width=100)  # Reduced from 1000 to 100
-        except:
-            # If image loading fails, show a placeholder or emoji
-            st.markdown("📊")
-            
     with col2:
         # Use markdown with HTML for better alignment - added negative margin-left
         st.markdown("""
