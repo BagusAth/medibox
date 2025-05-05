@@ -373,7 +373,7 @@ def display_header_with_logo():
     with col2:
         # Use markdown with HTML for better alignment - added negative margin-left
         st.markdown("""
-            <h1 style="margin-top: 5px; margin-left: -40px; padding-top: 0;">MediBox</h1>
+            <h1 style="margin-top: 5px; margin-left: -20px; padding-top: 0;">MediBox</h1>
             """, unsafe_allow_html=True)
         
 def generate_diet_plan(history):
