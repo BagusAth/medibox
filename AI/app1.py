@@ -430,7 +430,7 @@ def login_page():
 
 def confirm_config_page():
     """Halaman konfirmasi untuk mengubah konfigurasi atau langsung ke halaman utama"""
-    st.title("✅ Login Berhasil")
+    st.title("✅ Berhasil Masuk Medibox")
     
     # Display current box configuration
     cfg = st.session_state.box_cfg
