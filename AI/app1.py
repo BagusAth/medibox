@@ -13,14 +13,26 @@ def set_custom_theme():
     <style>
         /* Main background color */
         .stApp {
-            background-color: #ff9d23;
+            background-color: #fef9e1;
+        }
+        
+        /* NEW: Top line highlight with cream color */
+        .stApp > header, div[data-testid="stHeader"] {
+            background-color: #e98b1f !important;
+            border-bottom: 2px solid #e98b1f;
+        }
+        
+        /* Ensure text in header area is dark color for contrast */
+        .stApp > header span, div[data-testid="stHeader"] span,
+        .stApp > header div, div[data-testid="stHeader"] div {
+            color: #2b2e2d !important;
         }
         
         /* General text color for all elements */
         p, h1, h2, h3, h4, h5, h6, .stMarkdown, div.stText, 
         label, .st-bk, .st-c0, .stTextInput, .stDateInput, 
         .stTimeInput, .stSelectbox, span {
-            color: #fef9e1 !important;
+            color: #2b2e2d !important;
         }
         
         /* Sidebar background color */
@@ -44,8 +56,30 @@ def set_custom_theme():
         [data-testid="baseButton-secondary"], [data-testid="baseButton-primary"] {
             background-color: #fef9e1 !important;
             color: #2b2e2d !important;
-            border-color: #2b2e2d !important;
+            border-color: #e98b1f !important;
+            border-width: 2px !important;
         }
+
+        /* Gender selectbox and dropdown styling - specifically target these components */
+        .stSelectbox > div[data-baseweb="select"] > div, 
+        .stSelectbox div[role="listbox"],
+        div[data-baseweb="popover"] div[role="listbox"],
+        div[data-baseweb="select"] {
+            background-color: #fef9e1 !important;
+            color: #2b2e2d !important;
+        }
+
+        /* Selected option in dropdown */
+        .stSelectbox div[role="option"][aria-selected="true"] {
+            background-color: rgba(233, 139, 31, 0.2) !important;
+            color: #2b2e2d !important;
+        }
+        
+        /* Hover state for options */
+        .stSelectbox div[role="option"]:hover {
+            background-color: rgba(233, 139, 31, 0.1) !important;
+        }
+        
         
         /* NEW: Ensure button text color with higher specificity */
         .stButton button span, .stDownloadButton button span,
@@ -55,8 +89,9 @@ def set_custom_theme():
         
         /* NEW: Button hover effects */
         .stButton button:hover, .stDownloadButton button:hover, button:hover {
-            background-color: #f5efd0 !important; 
-            border-color: #222523 !important;
+            background-color: #fef9e1 !important;
+            border-color: #ff9d23 !important;
+            box-shadow: 0px 0px 5px rgba(233, 139, 31, 0.5) !important;
         }
         
         /* NEW: Form input fields styling */
@@ -122,7 +157,7 @@ def set_custom_theme():
         
         /* Caption text */
         .st-caption {
-            color: #fef9e1 !important;
+            color: #e98b1f !important;
         }
 
         /* Fix for markdown lists */
@@ -134,6 +169,7 @@ def set_custom_theme():
         .stDataFrame table, div.stDataFrame > div, .dataframe {
             background-color: #ff9d23 !important;
             color: #fef9e1 !important;
+            border: 1px solid #e98b1f !important;
         }
         
         /* Table headers */
@@ -141,18 +177,26 @@ def set_custom_theme():
             background-color: #e98b1f !important;
             color: #fef9e1 !important;
             font-weight: bold !important;
+            border-bottom: 2px solid #fef9e1 !important;
         }
         
-        /* Table cells */
+        /* Table cells - FIX THE TEXT COLOR HERE */
         .stDataFrame td, .dataframe td {
             background-color: #ff9d23 !important;
-            color: #fef9e1 !important;
+            color: #fef9e1 !important;  /* Changed from #e98b1f to #fef9e1 for readability */
+            border-bottom: 1px solid rgba(254, 249, 225, 0.3) !important;
+        }
+        
+        /* Table hover effect */
+        .stDataFrame tr:hover td {
+            background-color: #e98b1f !important;
         }
         
         /* Pagination buttons in tables */
         .stDataFrame button, .stDataFrame [role="button"] {
             background-color: #fef9e1 !important;
             color: #2b2e2d !important;
+            border-color: #e98b1f !important;
         }
     </style>
     """
@@ -360,24 +404,45 @@ def reminder_page():
         schedule = reminder_collection.find_one({"box_id": st.session_state.box_id})
     
     if schedule:
-        # Display schedule details
-        st.success("✅ Jadwal pengingat tersedia")
+        # Display schedule availability with custom styling
+        st.markdown("""
+        <div style="padding:10px; border-radius:5px; border-left:3px solid #e98b1f; background-color:rgba(233, 139, 31, 0.1);">
+          <p style="color:#e98b1f; font-weight:bold; margin-bottom:10px;">✅ Jadwal pengingat tersedia</p>
+        </div>
+        """, unsafe_allow_html=True)
         
-        with st.expander("ℹ️ Penjelasan", expanded=True):
-            if "explanation" in schedule:
-                st.write(schedule["explanation"])
-            else:
-                st.write("Tidak ada penjelasan tersedia untuk jadwal ini.")
+        # Explanation section with custom styling
+        st.subheader("ℹ️ Penjelasan")
+        if "explanation" in schedule:
+            st.markdown(f"""
+            <div style="padding:10px; border-radius:5px; border-left:3px solid #e98b1f; background-color:rgba(233, 139, 31, 0.1);">
+              <p style="color:#e98b1f; margin-left:15px;">{schedule["explanation"]}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div style="padding:10px; border-radius:5px; border-left:3px solid #e98b1f; background-color:rgba(233, 139, 31, 0.1);">
+              <p style="color:#e98b1f; margin-left:15px;">Tidak ada penjelasan tersedia untuk jadwal ini.</p>
+            </div>
+            """, unsafe_allow_html=True)
         
-        # Medicine times
+        # Medicine times with custom styling
         st.subheader("⏰ Jadwal Minum Obat")
-        for entry in schedule.get("medicine_times", []):
-            st.info(f"**{entry['time']}** - {entry['message']}")
+        if schedule.get("medicine_times", []):
+
+            for entry in schedule.get("medicine_times", []):
+                st.info(f"**{entry['time']}** - {entry['message']}")
+            
+        else:
+            st.warning("⚠️ Belum ada jadwal pengingat obat")
         
-        # Meal times
+        # Meal times with custom styling
         st.subheader("🍽️ Jadwal Makan")
-        for entry in schedule.get("meal_times", []):
-            st.success(f"**{entry['time']}** - {entry['message']}")
+        if schedule.get("meal_times", []):
+            for entry in schedule.get("meal_times", []):
+                st.info(f"**{entry['time']}** - {entry['message']}")
+        else:
+            st.warning("⚠️ Belum ada jadwal pengingat obat")
         
         # Update last accessed time
         try:
@@ -400,7 +465,11 @@ def reminder_page():
                     st.success("✅ Jadwal berhasil diperbarui!")
                     st.rerun()
     else:
-        st.warning("⚠️ Belum ada jadwal pengingat obat")
+        st.markdown("""
+        <div style="padding:10px; border-radius:5px; border-left:3px solid #e98b1f; background-color:rgba(233, 139, 31, 0.1);">
+          <p style="color:#e98b1f; font-weight:bold; margin-bottom:10px;">⚠️ Belum ada jadwal pengingat obat</p>
+        </div>
+        """, unsafe_allow_html=True)
         
         # Create schedule option
         if st.button("➕ Buat Jadwal Baru"):
@@ -764,26 +833,36 @@ def main_page():
     
     st.title("🩺 Aplikasi Pemeriksaan Kesehatan")
     
-    # Display medicine info from box config
+    # Display medicine info with styled orange themed box
     if cfg:
-        with st.expander("💊 Informasi Obat", expanded=True):
-            st.write(f"**Nama Pengguna       :** {cfg.get('nama', 'Belum diatur')}")
-            st.write(f"**Penyakit/Kondisi    :** {cfg.get('nama_penyakit', 'Belum diatur')}")
-            st.write(f"**Nama Obat           :** {cfg.get('medication_name', 'Belum diatur')}")
-            st.write(f"**Jumlah Obat         :** {cfg.get('Jumlah_obat', 0)}")
-            st.write(f"**Usia                :** {cfg.get('usia', 'Belum diatur')} tahun")
-            st.write(f"**Jenis Kelamin       :** {cfg.get('jenis_kelamin', 'Belum diatur')}")
-            st.write(f"**Riwayat Alergi      :** {cfg.get('riwayat_alergi', 'Belum diatur')}")
-            catatan_apoteker = cfg.get('catatan_apoteker', '')
-            if catatan_apoteker and catatan_apoteker.strip():
-                st.write(f"**Catatan Apoteker:** {catatan_apoteker}")
-            else:
-                st.write("**Catatan Apoteker:** Tidak ada")
-            
-
-            dosage = cfg.get('dosage_rules', '')
-            if dosage:
-                st.write(f"**Aturan Minum        :** {dosage}")
+        # Display medicine info with styled orange themed box
+        medicine_info = f"""
+        <div style="padding:10px; border-radius:5px; border-left:3px solid #e98b1f; background-color:rgba(233, 139, 31, 0.1);">
+          <p style="color:#e98b1f; font-weight:bold; margin-bottom:10px;">💊 Informasi Obat:</p>
+          <p style="color:#e98b1f; margin-left:15px;">• <strong>Nama Pengguna:</strong> {cfg.get('nama', 'Belum diatur')}</p>
+          <p style="color:#e98b1f; margin-left:15px;">• <strong>Penyakit/Kondisi:</strong> {cfg.get('nama_penyakit', 'Belum diatur')}</p>
+          <p style="color:#e98b1f; margin-left:15px;">• <strong>Nama Obat:</strong> {cfg.get('medication_name', 'Belum diatur')}</p>
+          <p style="color:#e98b1f; margin-left:15px;">• <strong>Jumlah Obat:</strong> {cfg.get('Jumlah_obat', 0)}</p>
+          <p style="color:#e98b1f; margin-left:15px;">• <strong>Usia:</strong> {cfg.get('usia', 'Belum diatur')} tahun</p>
+          <p style="color:#e98b1f; margin-left:15px;">• <strong>Jenis Kelamin:</strong> {cfg.get('jenis_kelamin', 'Belum diatur')}</p>
+          <p style="color:#e98b1f; margin-left:15px;">• <strong>Riwayat Alergi:</strong> {cfg.get('riwayat_alergi', 'Belum diatur')}</p>
+        """
+        
+        # Add pharmacist notes if available
+        catatan_apoteker = cfg.get('catatan_apoteker', '')
+        if catatan_apoteker and catatan_apoteker.strip():
+            medicine_info += f'<p style="color:#e98b1f; margin-left:15px;">• <strong>Catatan Apoteker:</strong> {catatan_apoteker}</p>'
+        else:
+            medicine_info += '<p style="color:#e98b1f; margin-left:15px;">• <strong>Catatan Apoteker:</strong> Tidak ada</p>'
+        
+        # Add dosage rules if available
+        dosage = cfg.get('dosage_rules', '')
+        if dosage:
+            medicine_info += f'<p style="color:#e98b1f; margin-left:15px;">• <strong>Aturan Minum:</strong> {dosage}</p>'
+        
+        # Close the div and display the formatted info
+        medicine_info += "</div>"
+        st.markdown(medicine_info, unsafe_allow_html=True)
     if st.button("Ganti Informasi Pengguna", key="change_box"): 
         # Keep the box_id, just navigate to config page
         st.session_state.page = 'config'
@@ -1001,13 +1080,15 @@ def sensor_history_page():
                     obat_diminum = latest_row.get('jumlah_obat_diminum', 0)
                     obat_saat_ini = latest_row.get('jumlah_obat_saat_ini', 0)
                     
-                    # Display medication information
-                    st.info(f"""
-                    **Informasi Obat:**
-                    - Jumlah obat awal: {jumlah_awal}
-                    - Jumlah obat diminum: {obat_diminum}
-                    - Jumlah obat saat ini: {obat_saat_ini}
-                    """)
+                    # Display medication information with custom orange color
+                    st.markdown(f"""
+                    <div style="padding:10px; border-radius:5px; border-left:3px solid #e98b1f; background-color:rgba(233, 139, 31, 0.1);">
+                      <p style="color:#e98b1f; font-weight:bold; margin-bottom:10px;">📊 Informasi Obat:</p>
+                      <p style="color:#e98b1f; margin-left:15px;">• Jumlah obat awal: {jumlah_awal}</p>
+                      <p style="color:#e98b1f; margin-left:15px;">• Jumlah obat diminum: {obat_diminum}</p>
+                      <p style="color:#e98b1f; margin-left:15px;">• Jumlah obat saat ini: {obat_saat_ini}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
                 
                 # Prepare display dataframe - remove tracking columns
                 display_columns = [col for col in filtered_df.columns if col not in 
@@ -1028,13 +1109,15 @@ def sensor_history_page():
                 obat_diminum = latest_row.get('jumlah_obat_diminum', 0)
                 obat_saat_ini = latest_row.get('jumlah_obat_saat_ini', 0)
                 
-                # Display medication information
-                st.info(f"""
-                **Informasi Obat:**
-                - Jumlah obat awal: {jumlah_awal}
-                - Jumlah obat diminum: {obat_diminum}
-                - Jumlah obat saat ini: {obat_saat_ini}
-                """)
+                # Display medication information with custom orange color
+                st.markdown(f"""
+                <div style="padding:10px; border-radius:5px; border-left:3px solid #e98b1f; background-color:rgba(233, 139, 31, 0.1);">
+                  <p style="color:#e98b1f; font-weight:bold; margin-bottom:10px;">📊 Informasi Obat:</p>
+                  <p style="color:#e98b1f; margin-left:15px;">• Jumlah obat awal: {jumlah_awal}</p>
+                  <p style="color:#e98b1f; margin-left:15px;">• Jumlah obat diminum: {obat_diminum}</p>
+                  <p style="color:#e98b1f; margin-left:15px;">• Jumlah obat saat ini: {obat_saat_ini}</p>
+                </div>
+                """, unsafe_allow_html=True)
             
             # Prepare display dataframe - remove tracking columns
             display_columns = [col for col in df.columns if col not in 
