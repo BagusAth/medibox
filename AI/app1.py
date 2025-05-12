@@ -5,9 +5,160 @@ from bson.json_util import dumps
 import certifi
 import pandas as pd
 from datetime import datetime, timedelta
-from PIL import Image
 import pytz
 
+def set_custom_theme():
+    """Apply custom color theme to the app"""
+    custom_css = """
+    <style>
+        /* Main background color */
+        .stApp {
+            background-color: #ff9d23;
+        }
+        
+        /* General text color for all elements */
+        p, h1, h2, h3, h4, h5, h6, .stMarkdown, div.stText, 
+        label, .st-bk, .st-c0, .stTextInput, .stDateInput, 
+        .stTimeInput, .stSelectbox, span {
+            color: #fef9e1 !important;
+        }
+        
+        /* Sidebar background color */
+        [data-testid="stSidebar"] {
+            background-color: #fef9e1;
+        }
+        
+        /* Sidebar text color */
+        [data-testid="stSidebar"] p, 
+        [data-testid="stSidebar"] h1, 
+        [data-testid="stSidebar"] h2, 
+        [data-testid="stSidebar"] span,
+        [data-testid="stSidebar"] div,
+        [data-testid="stSidebar"] label, 
+        [data-testid="stSidebar"] .stMarkdown {
+            color: #2b2e2d !important;
+        }
+        
+        /* UPDATED: Button styling with stronger specificity for text */
+        .stButton button, .stDownloadButton button, button, 
+        [data-testid="baseButton-secondary"], [data-testid="baseButton-primary"] {
+            background-color: #fef9e1 !important;
+            color: #2b2e2d !important;
+            border-color: #2b2e2d !important;
+        }
+        
+        /* NEW: Ensure button text color with higher specificity */
+        .stButton button span, .stDownloadButton button span,
+        button span, button p, button div, button label {
+            color: #2b2e2d !important;
+        }
+        
+        /* NEW: Button hover effects */
+        .stButton button:hover, .stDownloadButton button:hover, button:hover {
+            background-color: #f5efd0 !important; 
+            border-color: #222523 !important;
+        }
+        
+        /* NEW: Form input fields styling */
+        input, textarea, [data-baseweb="input"], [data-baseweb="textarea"],
+        [data-baseweb="select"] .control, [data-baseweb="select"] input,
+        .stNumberInput input, .stTextArea textarea, .stTextInput input, 
+        .stSelectbox div[role="listbox"], .stDateInput input {
+            background-color: #fef9e1 !important;
+            color: #2b2e2d !important;
+            border-color: #2b2e2d !important;
+        }
+        
+        /* NEW: Multi-select styling */
+        .stMultiSelect [data-baseweb="tag"] {
+            background-color: #fef9e1 !important;
+            color: #2b2e2d !important;
+        }
+        
+        /* NEW: Dropdown menu items */
+        div[role="menuitem"], div[role="listbox"] ul li {
+            background-color: #fef9e1 !important;
+            color: #2b2e2d !important;
+        }
+        
+        /* NEW: Checkbox and Radio button text colors */
+        .stCheckbox label, .stRadio label {
+            color: #fef9e1 !important;
+        }
+        
+        /* KEEPING: Sidebar checkbox/radio text color */
+        [data-testid="stSidebar"] .stRadio label,
+        [data-testid="stSidebar"] .stCheckbox label {
+            color: #2b2e2d !important;
+        }
+        
+        /* Specific elements that need color adjustments */
+        .stTextArea textarea, .stTextInput>div>div>input {
+            background-color: #fef9e1 !important;
+            color: #2b2e2d !important;
+            border: 1px solid #2b2e2d;
+        }
+        
+        /* Dataframe styling for better visibility */
+        .dataframe {
+            color: #2b2e2d;
+        }
+        
+        /* Divider color */
+        hr {
+            border-color: #fef9e1;
+        }
+        
+        /* Card/container elements */
+        [data-testid="stExpander"] {
+            border: 1px solid #fef9e1;
+            background-color: rgba(255, 157, 35, 0.7);
+        }
+        
+        /* Success/info messages */
+        .st-success, .st-info {
+            color: #2b2e2d;
+        }
+        
+        /* Caption text */
+        .st-caption {
+            color: #fef9e1 !important;
+        }
+
+        /* Fix for markdown lists */
+        .stMarkdown ul, .stMarkdown ol, .stMarkdown li {
+            color: #fef9e1 !important;
+        }
+        
+        /* NEW: Table styling with orange background and cream text */
+        .stDataFrame table, div.stDataFrame > div, .dataframe {
+            background-color: #ff9d23 !important;
+            color: #fef9e1 !important;
+        }
+        
+        /* Table headers */
+        .stDataFrame th, .dataframe th {
+            background-color: #e98b1f !important;
+            color: #fef9e1 !important;
+            font-weight: bold !important;
+        }
+        
+        /* Table cells */
+        .stDataFrame td, .dataframe td {
+            background-color: #ff9d23 !important;
+            color: #fef9e1 !important;
+        }
+        
+        /* Pagination buttons in tables */
+        .stDataFrame button, .stDataFrame [role="button"] {
+            background-color: #fef9e1 !important;
+            color: #2b2e2d !important;
+        }
+    </style>
+    """
+    st.markdown(custom_css, unsafe_allow_html=True)
+# Add this line after your imports and before any other Streamlit elements
+set_custom_theme()
 # ===========================
 # KONFIGURASI AWAL
 # ===========================
@@ -362,7 +513,7 @@ def generate_recommendations():
 def display_header_with_logo():
     """Display MediBox header with logo image"""
     st.markdown("""
-        <h1 style="margin-top: 5px; margin-left: -20px; padding-top: 0;">MediBox</h1>
+        <h1 style="margin-top: 5px; margin-left: 10px; padding-top: 0;">MediBox</h1>
         """, unsafe_allow_html=True)
         
 def generate_diet_plan(history):
@@ -1220,4 +1371,3 @@ else:
 # ===========================
 st.divider()
 st.caption("⚠️ Aplikasi ini bukan pengganti diagnosis medis profesional.")
-
