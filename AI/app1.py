@@ -165,26 +165,31 @@ def set_custom_theme():
             color: #fef9e1 !important;
         }
         
-        /* NEW: Table styling with orange background and cream text */
-        .stDataFrame table, div.stDataFrame > div, .dataframe {
-            background-color: #ff9d23 !important;
-            color: #fef9e1 !important;
-            border: 1px solid #e98b1f !important;
+        /* Table styling - SIMPLIFIED AND FIXED */
+        .stDataFrame, .dataframe, div[data-testid="stTable"] {
+            background-color: #fef9e1 !important;
+            color: #2b2e2d !important;
         }
-        
-        /* Table headers */
-        .stDataFrame th, .dataframe th {
-            background-color: #e98b1f !important;
-            color: #fef9e1 !important;
+
+        .stDataFrame table,
+        .dataframe, 
+        div[data-testid="stTable"] table {
+            background-color: #fef9e1 !important;
+            color: #2b2e2d !important;
+            border: 2px solid #e98b1f !important;
+        }
+
+        .stDataFrame th,
+        .dataframe th {
+            background-color: rgba(233, 139, 31, 0.2) !important;
+            color: #2b2e2d !important;
             font-weight: bold !important;
-            border-bottom: 2px solid #fef9e1 !important;
         }
-        
-        /* Table cells - FIX THE TEXT COLOR HERE */
-        .stDataFrame td, .dataframe td {
-            background-color: #ff9d23 !important;
-            color: #fef9e1 !important;  /* Changed from #e98b1f to #fef9e1 for readability */
-            border-bottom: 1px solid rgba(254, 249, 225, 0.3) !important;
+
+        .stDataFrame td,
+        .dataframe td {
+            background-color: #fef9e1 !important;
+            color: #2b2e2d !important;
         }
         
         /* Table hover effect */
@@ -203,6 +208,60 @@ def set_custom_theme():
     st.markdown(custom_css, unsafe_allow_html=True)
 # Add this line after your imports and before any other Streamlit elements
 set_custom_theme()
+# Add this after set_custom_theme() call
+# Add this right after your set_custom_theme() call to override the existing table styling
+st.markdown("""
+<style>
+/* More specific table styling with complete targeting */
+div[data-testid="stTable"] table,
+.element-container div.dataframe-container,
+.element-container div.table-container,
+.stDataFrame table,
+div.stDataFrame > div {
+    background-color: #fef9e1 !important;
+    color: #2b2e2d !important;
+    border: 2px solid #e98b1f !important;
+}
+
+/* Target column headers specifically */
+div[data-testid="stTable"] th,
+.stDataFrame th,
+.dataframe th,
+div.dataframe thead th,
+div.stDataFrame thead th,
+.element-container div.dataframe-container thead th,
+.element-container div.table-container thead th,
+.index_name,
+.col_heading {
+    background-color: #fef9e1 !important; 
+    color: #2b2e2d !important;
+    font-weight: bold !important;
+    border: 1px solid #e98b1f !important;
+}
+
+/* Target row indices specifically */
+div[data-testid="stTable"] tbody th,
+.stDataFrame tbody th,
+.dataframe tbody th,
+div.dataframe tbody th,
+.element-container div.dataframe-container tbody th,
+.row_heading {
+    background-color: #fef9e1 !important;
+    color: #2b2e2d !important;
+    font-weight: bold !important;
+    border: 1px solid #e98b1f !important;
+}
+
+/* Regular cells */
+div[data-testid="stTable"] td,
+.stDataFrame td,
+.dataframe td {
+    background-color: #fef9e1 !important;
+    color: #2b2e2d !important;
+    border: 1px solid #e98b1f !important;
+}
+</style>
+""", unsafe_allow_html=True)
 # ===========================
 # KONFIGURASI AWAL
 # ===========================
@@ -1099,7 +1158,39 @@ def sensor_history_page():
                 if 'jumlah_obat_saat_ini' in display_df.columns:
                     display_df = display_df.rename(columns={'jumlah_obat_saat_ini': 'sisa_obat'})
                 
-                st.dataframe(display_df.sort_values(by="timestamp", ascending=False), use_container_width=True)
+                # Apply styling directly to the DataFrame
+                # First sort the DataFrame
+                # Replace the current styling code with this enhanced version in both places:
+
+                # First sort the DataFrame
+                display_df = display_df.sort_values(by="timestamp", ascending=False)
+
+                # Then apply comprehensive styling for ALL table elements
+                display_df = display_df.style.set_properties(**{
+                    'background-color': '#fef9e1',
+                    'color': '#2b2e2d',
+                    'border': '1px solid #e98b1f'
+                }).set_table_styles([
+                    # Style for header cells
+                    {'selector': 'th', 
+                    'props': [('background-color', '#fef9e1'), 
+                            ('color', '#2b2e2d'),
+                            ('font-weight', 'bold'),
+                            ('border', '1px solid #e98b1f')]},
+                    # Style for index cells
+                    {'selector': 'th.row_heading',
+                    'props': [('background-color', '#fef9e1'),
+                            ('color', '#2b2e2d'),
+                            ('border', '1px solid #e98b1f')]},
+                    # Style for the header index cell (top-left cell)
+                    {'selector': 'th.col_heading.level0.index_name',
+                    'props': [('background-color', '#fef9e1'),
+                            ('color', '#2b2e2d'),
+                            ('border', '1px solid #e98b1f')]}
+                ])
+
+                # Finally display it
+                st.dataframe(display_df, use_container_width=True)
         else:
             # If last_updated is not available, display all data
             # Show medication stats with the new variables
@@ -1127,6 +1218,13 @@ def sensor_history_page():
             # Rename column for display
             if 'jumlah_obat_saat_ini' in display_df.columns:
                 display_df = display_df.rename(columns={'jumlah_obat_saat_ini': 'sisa_obat'})
+            
+            # Apply styling directly to the DataFrame
+            display_df = display_df.style.set_properties(**{
+                'background-color': '#fef9e1',
+                'color': '#2b2e2d',
+                'border': '1px solid #e98b1f'
+            })
             
             st.dataframe(display_df.sort_values(by="timestamp", ascending=False), use_container_width=True)
     else:
