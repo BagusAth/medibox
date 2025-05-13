@@ -1030,6 +1030,37 @@ def questioning_page():
 def results_page():
     st.title("📝 Hasil Analisis")
     
+    # Add this CSS to ensure all text in this page is dark grey
+    st.markdown("""
+    <style>
+        /* Apply dark grey text color to all markdown content in this section */
+        .element-container .stMarkdown p,
+        .element-container .stMarkdown li,
+        .element-container .stMarkdown h1,
+        .element-container .stMarkdown h2,
+        .element-container .stMarkdown h3,
+        .element-container .stMarkdown h4,
+        .element-container .stMarkdown h5,
+        .element-container .stMarkdown h6,
+        .element-container .stMarkdown a,
+        .element-container .stMarkdown span,
+        .element-container .stMarkdown strong,
+        .element-container .stMarkdown em,
+        .element-container .stMarkdown code {
+            color: #2b2e2d !important;
+        }
+        
+        /* Ensure code blocks and inline code also have dark text */
+        .element-container .stMarkdown pre,
+        .element-container .stMarkdown code {
+            color: #2b2e2d !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Get user's gender from configuration
+    cfg = st.session_state.box_cfg or {}
+    
     # Get user's gender from configuration
     cfg = st.session_state.box_cfg or {}
     jenis_kelamin = cfg.get('jenis_kelamin', '')
